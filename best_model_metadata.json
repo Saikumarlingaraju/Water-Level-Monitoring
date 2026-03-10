@@ -1,0 +1,20 @@
+{
+  "model_name": "LSTM Tuned",
+  "model_type": "LSTM",
+  "version": "2.0",
+  "accuracy": 0.9387,
+  "macro_f1": 0.8386,
+  "last_trained": "2026-03-10",
+  "classes": [
+    "filling",
+    "flush",
+    "geyser",
+    "no_activity",
+    "washing_machine"
+  ],
+  "window_size": 30,
+  "features": [
+    "distance_lp",
+    "slope"
+  ]
+}

@@ -1,0 +1,5 @@
+Experiment,Model,Layers,Units,Dropout,Learning Rate,Epochs,Accuracy,Macro F1,Notes
+2,LSTM Tuned,3,"128,64,32",0.3,0.001,18,93.87,0.8386,Higher-capacity LSTM with class weights and scaled windows
+4,GRU Tuned,2,"128,64",0.3,0.001,18,88.71,0.799,GRU with class weights and wider recurrent layers
+1,LSTM Baseline,2,"48,24",0.2,0.001,8,86.36,0.7492,Original notebook-style stacked LSTM baseline
+3,CNN Tuned,3,"64,128,128",0.3,0.0008,11,83.67,0.7251,Deeper 1D CNN with batch normalization and global pooling
