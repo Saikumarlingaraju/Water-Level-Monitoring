@@ -25,6 +25,7 @@ Use these settings:
 
 | Setting | Value |
 |---------|-------|
+| Python Version | `3.11.11` |
 | Environment | Python |
 | Root Directory | `backend` |
 | Build Command | `pip install -r requirements.txt` |
