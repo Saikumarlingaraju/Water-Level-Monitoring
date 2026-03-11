@@ -67,6 +67,21 @@ const filterByTimeRange = (items, selectedTimeRange, customFromDate, customToDat
   });
 };
 
+const buildFallbackNodesFromSensorData = (sensorItems) => {
+  const uniqueNodeIds = [...new Set((sensorItems || []).map((item) => item.node_id).filter(Boolean))];
+
+  return uniqueNodeIds.map((nodeId) => ({
+    id: nodeId,
+    name: nodeId,
+    tank_height: 200,
+    tank_length: null,
+    tank_width: null,
+    latitude: null,
+    longitude: null,
+    inferred: true,
+  }));
+};
+
 const Home = () => {
   const [waterLevel, setWaterLevel] = useState(0);
   const [temperature, setTemperature] = useState(0);
@@ -238,21 +253,42 @@ const Home = () => {
         longitude: node.long
       }));
 
-      setNodes(transformedNodes);
+      let resolvedNodes = transformedNodes;
+
+      if (resolvedNodes.length === 0) {
+        const sensorResponse = await axios.get(config.SENSOR_DATA_URL, {
+          headers: {
+            accept: 'application/json'
+          }
+        });
+
+        resolvedNodes = buildFallbackNodesFromSensorData(sensorResponse.data || []);
+      }
+
+      setNodes(resolvedNodes);
 
       // Set first node as default if no node is selected
-      if (transformedNodes.length > 0 && !selectedNode) {
-        setSelectedNode(transformedNodes[0].id);
+      if (resolvedNodes.length > 0 && !selectedNode) {
+        setSelectedNode(resolvedNodes[0].id);
       }
     } catch (error) {
       console.error('Error fetching nodes:', error);
-      // If API fails, create some sample nodes based on your data
-      const sampleNodes = [
-        { id: '', name: 'Tank 001' }
-      ];
-      setNodes(sampleNodes);
-      if (!selectedNode) {
-        setSelectedNode(sampleNodes[0].id);
+      try {
+        const sensorResponse = await axios.get(config.SENSOR_DATA_URL, {
+          headers: {
+            accept: 'application/json'
+          }
+        });
+
+        const fallbackNodes = buildFallbackNodesFromSensorData(sensorResponse.data || []);
+        setNodes(fallbackNodes);
+
+        if (fallbackNodes.length > 0 && !selectedNode) {
+          setSelectedNode(fallbackNodes[0].id);
+        }
+      } catch (sensorError) {
+        console.error('Error building fallback nodes from sensor data:', sensorError);
+        setNodes([]);
       }
     }
   }, [selectedNode]);
