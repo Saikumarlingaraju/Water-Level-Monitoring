@@ -17,8 +17,9 @@ const Navbar = ({ onToggleSidebar }) => {
       </div>
       
       <div className="navbar-center">
-        <h1 className="navbar-title">{config.BRAND_NAME}</h1>
-        <p className="navbar-subtitle">{config.BRAND_TAGLINE}</p>
+        <h1 className="navbar-title">{config.COLLEGE_NAME}</h1>
+        <p className="navbar-subtitle">{config.BRAND_NAME}</p>
+        <p className="navbar-tagline">{config.BRAND_TAGLINE}</p>
       </div>
 
       <div className="navbar-right">

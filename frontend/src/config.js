@@ -2,6 +2,7 @@ const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://127.0.0.1:800
 
 const config = {
   API_BASE_URL,
+  COLLEGE_NAME: 'Hyderabad Institute of Technology and Management',
   BRAND_NAME: 'HITAM Water Intelligence Hub',
   BRAND_SHORT_NAME: 'HITAM',
   BRAND_TAGLINE: 'Find Your Path Through Smarter Water Monitoring',
