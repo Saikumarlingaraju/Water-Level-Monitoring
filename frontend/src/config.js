@@ -13,6 +13,7 @@ const config = {
   BATCH_PREDICT_URL: `${API_BASE_URL}/api/v1/predict/batch`,
   MODEL_INFO_URL: `${API_BASE_URL}/api/v1/model-info`,
   PREDICTIONS_HISTORY_URL: `${API_BASE_URL}/api/v1/predictions-history`,
+  ALERTS_URL: `${API_BASE_URL}/api/v1/alerts`,
   AUTH_LOGIN_URL: `${API_BASE_URL}/api/v1/auth/login`,
   AUTH_REGISTER_URL: `${API_BASE_URL}/api/v1/auth/register`,
   AUTH_ME_URL: `${API_BASE_URL}/api/v1/auth/me`,

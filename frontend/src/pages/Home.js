@@ -116,6 +116,7 @@ const Home = () => {
   const [predictionHistory, setPredictionHistory] = useState([]);
   const [modelInfo, setModelInfo] = useState(null);
   const [realtimeStatus, setRealtimeStatus] = useState('connecting');
+  const [alerts, setAlerts] = useState([]);
 
   // Mapping between node IDs and tank IDs for sensor data
   const getActualTankId = (nodeId) => {
@@ -132,7 +133,7 @@ const Home = () => {
     try {
       setLoading(true);
       const actualNodeId = getActualTankId(selectedNode);
-      const [sensorResponse, predictionsResponse, modelInfoResponse] = await Promise.all([
+      const [sensorResponse, predictionsResponse, modelInfoResponse, alertsResponse] = await Promise.all([
         axios.get(config.SENSOR_DATA_URL, {
           headers: { accept: 'application/json' },
         }),
@@ -140,6 +141,9 @@ const Home = () => {
           headers: { accept: 'application/json' },
         }),
         axios.get(config.MODEL_INFO_URL, {
+          headers: { accept: 'application/json' },
+        }),
+        axios.get(`${config.ALERTS_URL}?limit=20`, {
           headers: { accept: 'application/json' },
         }),
       ]);
@@ -162,8 +166,10 @@ const Home = () => {
 
       const sensorData = allSensorData.filter((item) => item.node_id === actualNodeId);
       const scopedHistory = historyItems.filter((item) => item.node_id === actualNodeId);
+      const scopedAlerts = (alertsResponse.data || []).filter((item) => !actualNodeId || item.node_id === actualNodeId);
       setPredictionHistory(scopedHistory);
       setModelInfo(modelInfoResponse.data);
+      setAlerts(scopedAlerts);
 
       // Check if data exists for the selected node
       if (sensorData.length > 0) {
@@ -387,6 +393,15 @@ const Home = () => {
       socket.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
+
+          if (payload.type === 'alert') {
+            if (selectedNode && payload.node_id !== getActualTankId(selectedNode)) {
+              return;
+            }
+
+            setAlerts((current) => ([payload, ...(current || []).filter((item) => item.id !== payload.id)]).slice(0, 20));
+            return;
+          }
 
           if (!['sensor_prediction', 'manual_prediction'].includes(payload.type)) {
             return;
@@ -854,6 +869,43 @@ const Home = () => {
             </ResponsiveContainer>
           )}
         </div>
+      </div>
+
+      <div className="panel-card alerts-panel-card">
+        <div className="panel-heading">
+          <h3>Recent Alerts</h3>
+          <span className="graph-subtitle">Anomaly alerts generated from sensor and prediction events</span>
+        </div>
+        {alerts.length === 0 ? (
+          <div className="graph-loading">No anomaly alerts have been triggered yet.</div>
+        ) : (
+          <div className="history-table-wrap">
+            <table className="nodes-table prediction-table">
+              <thead>
+                <tr>
+                  <th>Node</th>
+                  <th>Type</th>
+                  <th>Severity</th>
+                  <th>Message</th>
+                  <th>Email</th>
+                  <th>Created At</th>
+                </tr>
+              </thead>
+              <tbody>
+                {alerts.map((alert) => (
+                  <tr key={`${alert.id}-${alert.created_at}`}>
+                    <td>{alert.node_id}</td>
+                    <td className="node-id">{alert.alert_type.replaceAll('_', ' ')}</td>
+                    <td>{alert.severity}</td>
+                    <td>{alert.message}</td>
+                    <td>{alert.email_sent ? 'Sent' : 'Skipped'}</td>
+                    <td>{new Date(alert.created_at).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

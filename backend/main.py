@@ -1,7 +1,9 @@
 import asyncio
 import csv
+from email.message import EmailMessage
 import os
 import random
+import smtplib
 import threading
 import time
 from datetime import datetime, timedelta
@@ -31,8 +33,9 @@ try:
 except ImportError:
     load_model = None
 
-# Load environment variables from .env file
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent
+# Load environment variables from the backend directory so imports work regardless of cwd.
+load_dotenv(BASE_DIR / ".env")
 
 
 def env_flag(name: str, default: bool) -> bool:
@@ -43,21 +46,21 @@ def env_flag(name: str, default: bool) -> bool:
 
 
 def get_cors_settings():
+    raw_origin_regex = os.environ.get("CORS_ALLOW_ORIGIN_REGEX", "").strip() or None
     raw_origins = os.environ.get(
         "CORS_ALLOW_ORIGINS",
         "http://localhost:3000,http://127.0.0.1:3000",
     ).strip()
 
     if raw_origins == "*":
-        return ["*"], False
+        return ["*"], False, None
 
     origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
-    return origins or ["http://localhost:3000", "http://127.0.0.1:3000"], True
+    return origins or ["http://localhost:3000", "http://127.0.0.1:3000"], True, raw_origin_regex
 
 
 app = FastAPI()
 
-BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_MODEL_CLASSES = [
     "no_activity",
     "shower",
@@ -70,6 +73,23 @@ MODEL_ACCURACY = float(os.environ.get("MODEL_ACCURACY", "0.85"))
 AUTH_SECRET_KEY = os.environ.get("AUTH_SECRET_KEY", "change-this-secret-in-production")
 AUTH_ALGORITHM = "HS256"
 AUTH_TOKEN_EXPIRE_MINUTES = int(os.environ.get("AUTH_TOKEN_EXPIRE_MINUTES", "720"))
+ALERT_EMAIL_ENABLED = env_flag("ALERT_EMAIL_ENABLED", False)
+ALERT_EMAIL_FROM = os.environ.get("ALERT_EMAIL_FROM", "")
+ALERT_EMAIL_TO = os.environ.get("ALERT_EMAIL_TO", "")
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_USE_TLS = env_flag("SMTP_USE_TLS", True)
+ALERT_COOLDOWN_MINUTES = int(os.environ.get("ALERT_COOLDOWN_MINUTES", "30"))
+CRITICAL_WATER_LEVEL_PERCENT = float(os.environ.get("CRITICAL_WATER_LEVEL_PERCENT", "15"))
+HIGH_TEMPERATURE_C = float(os.environ.get("HIGH_TEMPERATURE_C", "35"))
+MAX_DISTANCE_CM = float(os.environ.get("MAX_DISTANCE_CM", "220"))
+ALERT_PREDICTION_LABELS = {
+    item.strip()
+    for item in os.environ.get("ALERT_PREDICTION_LABELS", "flush,geyser,washing_machine").split(",")
+    if item.strip()
+}
 MODEL_PATH_CANDIDATES = [
     BASE_DIR / "saved_models" / "best_model.h5",
     BASE_DIR / "saved_models" / "LSTM_model.h5",
@@ -88,7 +108,7 @@ model_metadata = {}
 TEST_MODE = env_flag("TEST_MODE", True)
 ENABLE_SENSOR_COLLECTOR = env_flag("ENABLE_SENSOR_COLLECTOR", True)
 SENSOR_POLL_SECONDS = int(os.environ.get("SENSOR_POLL_SECONDS", "20"))
-ALLOWED_ORIGINS, ALLOW_CREDENTIALS = get_cors_settings()
+ALLOWED_ORIGINS, ALLOW_CREDENTIALS, ALLOWED_ORIGIN_REGEX = get_cors_settings()
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
@@ -134,6 +154,7 @@ realtime_manager = RealtimeConnectionManager()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=ALLOW_CREDENTIALS,
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
@@ -209,6 +230,22 @@ def create_tables():
         temperature FLOAT,
         prediction VARCHAR(50),
         confidence FLOAT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS alerts (
+        id SERIAL PRIMARY KEY,
+        node_id VARCHAR(50) NOT NULL,
+        alert_type VARCHAR(80) NOT NULL,
+        severity VARCHAR(20) NOT NULL,
+        message TEXT NOT NULL,
+        prediction VARCHAR(80),
+        confidence FLOAT,
+        distance FLOAT,
+        temperature FLOAT,
+        email_sent BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
@@ -307,6 +344,16 @@ def sensor_collector():
                 )
             )
 
+            sensor_payload = PredictionRequest(node_id=NODE_ID, distance=distance, temperature=temperature)
+            sensor_label, sensor_confidence, _ = run_prediction(sensor_payload)
+            process_anomaly_alerts(
+                node_id=NODE_ID,
+                distance=distance,
+                temperature=temperature,
+                prediction=sensor_label,
+                confidence=sensor_confidence,
+            )
+
             print("Sensor data inserted")
 
         except Exception as e:
@@ -391,6 +438,21 @@ class BatchPredictionResponse(BaseModel):
     failed_rows: int
     predictions: List[BatchPredictionItem]
     errors: List[BatchPredictionError]
+
+
+class AlertRecord(BaseModel):
+
+    id: int
+    node_id: str
+    alert_type: str
+    severity: str
+    message: str
+    prediction: Optional[str] = None
+    confidence: Optional[float] = None
+    distance: Optional[float] = None
+    temperature: Optional[float] = None
+    email_sent: bool
+    created_at: datetime
 
 
 def hash_password(password: str) -> str:
@@ -656,6 +718,254 @@ def save_prediction_record(payload: PredictionRequest, label: str, confidence: f
     return record_id, created_at
 
 
+def get_tank_height_for_node(node_id: str) -> Optional[float]:
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT tank_height_cm
+        FROM tank_sensorparameters
+        WHERE node_id = %s
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (node_id,),
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return float(row[0]) if row and row[0] is not None else None
+
+
+def compute_water_level_percentage(node_id: str, distance: float) -> Optional[float]:
+
+    tank_height = get_tank_height_for_node(node_id)
+    if tank_height is None or tank_height <= 0:
+        return None
+
+    return max(0.0, min(100.0, ((tank_height - distance) / tank_height) * 100.0))
+
+
+def should_send_alert(node_id: str, alert_type: str) -> bool:
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT created_at
+        FROM alerts
+        WHERE node_id = %s AND alert_type = %s
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (node_id, alert_type),
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if row is None:
+        return True
+
+    return (datetime.utcnow() - row[0]).total_seconds() >= ALERT_COOLDOWN_MINUTES * 60
+
+
+def send_alert_email(subject: str, body: str) -> bool:
+
+    if not ALERT_EMAIL_ENABLED:
+        return False
+
+    required = [ALERT_EMAIL_FROM, ALERT_EMAIL_TO, SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD]
+    if not all(required):
+        print("Alert email skipped: SMTP settings are incomplete")
+        return False
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = ALERT_EMAIL_FROM
+    message["To"] = ALERT_EMAIL_TO
+    message.set_content(body)
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+            if SMTP_USE_TLS:
+                server.starttls()
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.send_message(message)
+        return True
+    except Exception as error:
+        print(f"Alert email failed: {error}")
+        return False
+
+
+def save_alert_record(
+    node_id: str,
+    alert_type: str,
+    severity: str,
+    message: str,
+    prediction: Optional[str],
+    confidence: Optional[float],
+    distance: float,
+    temperature: float,
+    email_sent: bool,
+):
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO alerts
+        (node_id, alert_type, severity, message, prediction, confidence, distance, temperature, email_sent)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id, created_at
+        """,
+        (node_id, alert_type, severity, message, prediction, confidence, distance, temperature, email_sent),
+    )
+    record_id, created_at = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+    return record_id, created_at
+
+
+def create_alert_message(
+    node_id: str,
+    alert_type: str,
+    distance: float,
+    temperature: float,
+    prediction: Optional[str],
+    confidence: Optional[float],
+    water_level_percentage: Optional[float],
+) -> tuple[str, str]:
+
+    if alert_type == "critical_low_water_level":
+        subject = f"Critical water level alert for {node_id}"
+        body = (
+            f"Node {node_id} has critical low water level.\n"
+            f"Water level: {water_level_percentage:.1f}%\n"
+            f"Distance: {distance} cm\n"
+            f"Temperature: {temperature} C\n"
+        )
+        return subject, body
+
+    if alert_type == "high_temperature":
+        subject = f"High temperature alert for {node_id}"
+        body = (
+            f"Node {node_id} exceeded the temperature threshold.\n"
+            f"Temperature: {temperature} C\n"
+            f"Distance: {distance} cm\n"
+        )
+        return subject, body
+
+    if alert_type == "sensor_out_of_range":
+        subject = f"Sensor anomaly detected for {node_id}"
+        body = (
+            f"Node {node_id} produced a distance reading outside the expected range.\n"
+            f"Distance: {distance} cm\n"
+            f"Temperature: {temperature} C\n"
+        )
+        return subject, body
+
+    subject = f"Prediction anomaly detected for {node_id}"
+    body = (
+        f"Node {node_id} triggered a prediction-based anomaly alert.\n"
+        f"Prediction: {prediction}\n"
+        f"Confidence: {confidence:.2f}\n"
+        f"Distance: {distance} cm\n"
+        f"Temperature: {temperature} C\n"
+    )
+    return subject, body
+
+
+def detect_alert_candidates(
+    node_id: str,
+    distance: float,
+    temperature: float,
+    prediction: Optional[str],
+    confidence: Optional[float],
+):
+
+    alerts = []
+    water_level_percentage = compute_water_level_percentage(node_id, distance)
+
+    if water_level_percentage is not None and water_level_percentage <= CRITICAL_WATER_LEVEL_PERCENT:
+        alerts.append(("critical_low_water_level", "high", water_level_percentage))
+
+    if temperature >= HIGH_TEMPERATURE_C:
+        alerts.append(("high_temperature", "medium", water_level_percentage))
+
+    if distance < 0 or distance > MAX_DISTANCE_CM:
+        alerts.append(("sensor_out_of_range", "high", water_level_percentage))
+
+    if prediction and prediction in ALERT_PREDICTION_LABELS and confidence is not None and confidence >= 0.7:
+        alerts.append(("prediction_anomaly", "medium", water_level_percentage))
+
+    return alerts
+
+
+def process_anomaly_alerts(
+    node_id: str,
+    distance: float,
+    temperature: float,
+    prediction: Optional[str] = None,
+    confidence: Optional[float] = None,
+):
+
+    created_alerts = []
+
+    for alert_type, severity, water_level_percentage in detect_alert_candidates(
+        node_id,
+        distance,
+        temperature,
+        prediction,
+        confidence,
+    ):
+        if not should_send_alert(node_id, alert_type):
+            continue
+
+        subject, body = create_alert_message(
+            node_id,
+            alert_type,
+            distance,
+            temperature,
+            prediction,
+            confidence,
+            water_level_percentage,
+        )
+        email_sent = send_alert_email(subject, body)
+        message = body.splitlines()[0]
+        alert_id, created_at = save_alert_record(
+            node_id=node_id,
+            alert_type=alert_type,
+            severity=severity,
+            message=message,
+            prediction=prediction,
+            confidence=confidence,
+            distance=distance,
+            temperature=temperature,
+            email_sent=email_sent,
+        )
+        alert_event = {
+            "type": "alert",
+            "id": alert_id,
+            "node_id": node_id,
+            "alert_type": alert_type,
+            "severity": severity,
+            "message": message,
+            "prediction": prediction,
+            "confidence": round(confidence, 4) if confidence is not None else None,
+            "distance": distance,
+            "temperature": temperature,
+            "email_sent": email_sent,
+            "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
+        }
+        realtime_manager.publish(alert_event)
+        created_alerts.append(alert_event)
+
+    return created_alerts
+
+
 def parse_time_features(value: str) -> List[float]:
 
     if value is None:
@@ -729,6 +1039,13 @@ def process_batch_prediction_rows(rows: List[dict]) -> BatchPredictionResponse:
 
             predictions.append(
                 build_prediction_response_item(row_number, payload, label, confidence, created_at, source)
+            )
+            process_anomaly_alerts(
+                node_id=payload.node_id,
+                distance=payload.distance,
+                temperature=payload.temperature,
+                prediction=label,
+                confidence=confidence,
             )
         except Exception as error:
             errors.append(BatchPredictionError(row_number=row_number, error=str(error)))
@@ -999,6 +1316,13 @@ def predict_water_activity(payload: PredictionRequest, current_user: UserProfile
     label, confidence, source = run_prediction(payload)
 
     record_id, created_at = save_prediction_record(payload, label, confidence)
+    process_anomaly_alerts(
+        node_id=payload.node_id,
+        distance=payload.distance,
+        temperature=payload.temperature,
+        prediction=label,
+        confidence=confidence,
+    )
 
     realtime_manager.publish({
         "type": "manual_prediction",
@@ -1109,6 +1433,45 @@ def get_predictions_history(
             "confidence": row[5],
             "created_at": row[6],
         }
+        for row in rows
+    ]
+
+
+@app.get("/api/v1/alerts", response_model=List[AlertRecord])
+def get_alerts(
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user: UserProfile = Depends(get_current_user),
+):
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, node_id, alert_type, severity, message, prediction, confidence, distance, temperature, email_sent, created_at
+        FROM alerts
+        ORDER BY created_at DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    return [
+        AlertRecord(
+            id=row[0],
+            node_id=row[1],
+            alert_type=row[2],
+            severity=row[3],
+            message=row[4],
+            prediction=row[5],
+            confidence=row[6],
+            distance=row[7],
+            temperature=row[8],
+            email_sent=row[9],
+            created_at=row[10],
+        )
         for row in rows
     ]
 

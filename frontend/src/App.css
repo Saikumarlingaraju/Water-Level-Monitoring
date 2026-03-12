@@ -1034,6 +1034,10 @@ textarea {
   gap: 16px;
 }
 
+.alerts-panel-card {
+  margin-top: 28px;
+}
+
 .batch-summary-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }

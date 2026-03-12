@@ -51,6 +51,7 @@ TEST_MODE=true
 ENABLE_SENSOR_COLLECTOR=true
 SENSOR_POLL_SECONDS=20
 CORS_ALLOW_ORIGINS=https://YOUR-FRONTEND-DOMAIN.vercel.app
+CORS_ALLOW_ORIGIN_REGEX=https://.*\.vercel\.app
 ```
 
 After the backend deploy finishes, verify these URLs:
@@ -104,8 +105,9 @@ Once your frontend URL is ready:
 
 1. Copy the frontend URL.
 2. Update the Render backend variable `CORS_ALLOW_ORIGINS` to that URL.
-3. Redeploy the backend if needed.
-4. Re-test prediction flow from the deployed frontend.
+3. If you use Vercel preview or alias domains, also set `CORS_ALLOW_ORIGIN_REGEX=https://.*\.vercel\.app`.
+4. Redeploy the backend if needed.
+5. Re-test prediction flow from the deployed frontend.
 
 ## 6. What To Screenshot After Deploy
 
