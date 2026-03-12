@@ -2,6 +2,19 @@ import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../auth';
+import config from '../config';
+
+const getAuthErrorMessage = (requestError) => {
+  if (requestError.response?.data?.detail) {
+    return requestError.response.data.detail;
+  }
+
+  if (requestError.request) {
+    return `Cannot reach the backend at ${config.API_BASE_URL}. Start the API server or set REACT_APP_API_BASE_URL.`;
+  }
+
+  return 'Unable to sign in';
+};
 
 const Login = () => {
   const { login } = useAuth();
@@ -25,7 +38,7 @@ const Login = () => {
       await login(formData);
       navigate(location.state?.from?.pathname || '/', { replace: true });
     } catch (requestError) {
-      setError(requestError.response?.data?.detail || 'Unable to sign in');
+      setError(getAuthErrorMessage(requestError));
     } finally {
       setLoading(false);
     }

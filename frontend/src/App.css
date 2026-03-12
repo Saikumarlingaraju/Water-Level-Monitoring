@@ -12,6 +12,60 @@
   --border-color: rgba(86, 157, 64, 0.16);
   --shadow-soft: 0 18px 40px rgba(37, 74, 27, 0.12);
   --shadow-strong: 0 24px 48px rgba(37, 74, 27, 0.18);
+  --app-bg:
+    radial-gradient(circle at top left, rgba(134, 194, 50, 0.2), transparent 30%),
+    radial-gradient(circle at top right, rgba(86, 157, 64, 0.22), transparent 25%),
+    linear-gradient(180deg, #f4fbf0 0%, #edf8ea 46%, #f8fdf6 100%);
+  --navbar-bg: linear-gradient(120deg, rgba(30, 81, 40, 0.96), rgba(86, 157, 64, 0.92));
+  --sidebar-bg: linear-gradient(180deg, rgba(30, 81, 40, 0.98), rgba(86, 157, 64, 0.98));
+  --card-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 250, 243, 0.88));
+  --card-border: rgba(255, 255, 255, 0.72);
+  --field-bg: rgba(255, 255, 255, 0.88);
+  --field-soft-bg: rgba(255, 255, 255, 0.72);
+  --overlay-bg: rgba(0, 0, 0, 0.5);
+  --chip-bg: rgba(255, 255, 255, 0.16);
+  --chip-border: rgba(255, 255, 255, 0.26);
+  --button-ghost-bg: rgba(255, 255, 255, 0.08);
+  --button-ghost-border: rgba(255, 255, 255, 0.28);
+  --auth-card-bg: rgba(255, 255, 255, 0.95);
+  --input-plain-bg: #ffffff;
+  --table-row-hover: rgba(15, 109, 99, 0.05);
+  --message-success-bg: #f0f9f0;
+  --message-warning-bg: #fff3e0;
+}
+
+:root[data-theme='dark'] {
+  --primary-color: #8bcf70;
+  --secondary-color: #d8f2c6;
+  --accent-color: #f2a45e;
+  --accent-soft: #f4d79e;
+  --surface-color: rgba(15, 26, 22, 0.92);
+  --surface-strong: #16221d;
+  --text-color: #e8f2ea;
+  --muted-text: #a7bbb0;
+  --border-color: rgba(139, 207, 112, 0.18);
+  --shadow-soft: 0 18px 40px rgba(0, 0, 0, 0.35);
+  --shadow-strong: 0 24px 48px rgba(0, 0, 0, 0.42);
+  --app-bg:
+    radial-gradient(circle at top left, rgba(139, 207, 112, 0.12), transparent 28%),
+    radial-gradient(circle at top right, rgba(242, 164, 94, 0.12), transparent 24%),
+    linear-gradient(180deg, #09110e 0%, #0e1714 48%, #101c17 100%);
+  --navbar-bg: linear-gradient(120deg, rgba(8, 21, 17, 0.96), rgba(20, 51, 35, 0.92));
+  --sidebar-bg: linear-gradient(180deg, rgba(8, 21, 17, 0.98), rgba(17, 41, 30, 0.98));
+  --card-bg: linear-gradient(180deg, rgba(20, 31, 27, 0.96), rgba(15, 24, 21, 0.92));
+  --card-border: rgba(139, 207, 112, 0.12);
+  --field-bg: rgba(18, 28, 24, 0.96);
+  --field-soft-bg: rgba(18, 28, 24, 0.82);
+  --overlay-bg: rgba(0, 0, 0, 0.72);
+  --chip-bg: rgba(139, 207, 112, 0.12);
+  --chip-border: rgba(139, 207, 112, 0.18);
+  --button-ghost-bg: rgba(255, 255, 255, 0.04);
+  --button-ghost-border: rgba(255, 255, 255, 0.14);
+  --auth-card-bg: rgba(16, 26, 22, 0.96);
+  --input-plain-bg: rgba(18, 28, 24, 0.96);
+  --table-row-hover: rgba(139, 207, 112, 0.08);
+  --message-success-bg: rgba(76, 175, 80, 0.15);
+  --message-warning-bg: rgba(255, 152, 0, 0.14);
 }
 
 * {
@@ -25,10 +79,8 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   color: var(--text-color);
-  background:
-    radial-gradient(circle at top left, rgba(134, 194, 50, 0.2), transparent 30%),
-    radial-gradient(circle at top right, rgba(86, 157, 64, 0.22), transparent 25%),
-    linear-gradient(180deg, #f4fbf0 0%, #edf8ea 46%, #f8fdf6 100%);
+  background: var(--app-bg);
+  transition: background 0.25s ease, color 0.25s ease;
 }
 
 button,
@@ -62,7 +114,7 @@ textarea {
   justify-content: space-between;
   padding: 0 24px;
   min-height: 84px;
-  background: linear-gradient(120deg, rgba(30, 81, 40, 0.96), rgba(86, 157, 64, 0.92));
+  background: var(--navbar-bg);
   color: white;
   box-shadow: 0 18px 38px rgba(10, 38, 49, 0.22);
   position: sticky;
@@ -80,7 +132,7 @@ textarea {
 .logo {
   width: 72px;
   height: 72px;
-  background: rgba(255, 255, 255, 0.94);
+  background: var(--auth-card-bg);
   border-radius: 20px;
   display: flex;
   align-items: center;
@@ -146,18 +198,31 @@ textarea {
 }
 
 .brand-chip {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--chip-bg);
   color: #f3ffe8;
-  border: 1px solid rgba(255, 255, 255, 0.26);
+  border: 1px solid var(--chip-border);
 }
 
 .logout-btn {
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--button-ghost-border);
+  background: var(--button-ghost-bg);
   color: #ffffff;
   padding: 10px 16px;
   border-radius: 999px;
   cursor: pointer;
+}
+
+.theme-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--button-ghost-border);
+  background: var(--button-ghost-bg);
+  color: #ffffff;
+  padding: 10px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-weight: 700;
 }
 
 .metric-chip {
@@ -219,7 +284,7 @@ textarea {
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-bg);
   z-index: 999;
 }
 
@@ -229,7 +294,7 @@ textarea {
   left: -250px;
   width: 250px;
   height: 100vh;
-  background: linear-gradient(180deg, rgba(30, 81, 40, 0.98), rgba(86, 157, 64, 0.98));
+  background: var(--sidebar-bg);
   box-shadow: 10px 0 40px rgba(10, 38, 49, 0.24);
   transition: left 0.3s ease;
   z-index: 1001;
@@ -323,7 +388,7 @@ textarea {
 
 .auth-card {
   width: min(100%, 480px);
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--auth-card-bg);
   border-radius: 28px;
   padding: 36px;
   box-shadow: 0 28px 60px rgba(5, 22, 10, 0.22);
@@ -372,7 +437,8 @@ textarea {
   border: 1px solid rgba(33, 49, 38, 0.14);
   border-radius: 14px;
   padding: 14px 16px;
-  background: #ffffff;
+  background: var(--input-plain-bg);
+  color: var(--text-color);
 }
 
 .auth-submit-btn {
@@ -585,7 +651,7 @@ textarea {
 .time-range-label,
 .date-label {
   font-size: 0.9rem;
-  color: #555;
+  color: var(--muted-text);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -598,7 +664,7 @@ textarea {
   padding: 12px 16px;
   border: 1px solid var(--border-color);
   border-radius: 14px;
-  background-color: rgba(255, 255, 255, 0.88);
+  background-color: var(--field-bg);
   color: var(--text-color);
   font-size: 0.95rem;
   transition: all 0.3s ease;
@@ -634,7 +700,7 @@ textarea {
   align-items: center;
   flex-wrap: wrap;
   padding: 10px 15px;
-  background-color: rgba(255, 255, 255, 0.72);
+  background-color: var(--field-soft-bg);
   border-radius: 18px;
   border: 1px solid var(--border-color);
 }
@@ -658,13 +724,13 @@ textarea {
 }
 
 .data-status-message.success {
-  background-color: #f0f9f0;
+  background-color: var(--message-success-bg);
   color: #2e7d32;
   border-left-color: #4caf50;
 }
 
 .data-status-message.warning {
-  background-color: #fff3e0;
+  background-color: var(--message-warning-bg);
   color: #f57c00;
   border-left-color: #ff9800;
 }
@@ -723,10 +789,10 @@ textarea {
 .nodes-stats,
 .nodes-table-container,
 .no-data {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 250, 243, 0.88));
+  background: var(--card-bg);
   border-radius: 24px;
   box-shadow: var(--shadow-soft);
-  border: 1px solid rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--card-border);
 }
 
 .card {
@@ -940,7 +1006,7 @@ textarea {
 
 .secondary-btn {
   border: 1px solid rgba(15, 109, 99, 0.22);
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--field-soft-bg);
   color: var(--primary-color);
   padding: 12px 18px;
   border-radius: 999px;
@@ -1179,7 +1245,7 @@ textarea {
 .nodes-table td {
   padding: 10px 12px;
   text-align: left;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--border-color);
   font-size: 0.82rem;
 }
 
@@ -1190,7 +1256,7 @@ textarea {
 }
 
 .nodes-table tbody tr:hover {
-  background-color: rgba(15, 109, 99, 0.05);
+  background-color: var(--table-row-hover);
 }
 
 .nodes-table .node-id {
@@ -1220,7 +1286,7 @@ textarea {
 .pagination-btn {
   padding: 10px 20px;
   border: 2px solid var(--primary-color);
-  background: white;
+  background: var(--field-bg);
   color: var(--primary-color);
   border-radius: 10px;
   cursor: pointer;
@@ -1242,9 +1308,49 @@ textarea {
   font-weight: 600;
   color: var(--text-color);
   padding: 10px 15px;
-  background: rgba(255, 255, 255, 0.74);
+  background: var(--field-soft-bg);
   border-radius: 10px;
   border: 1px solid var(--border-color);
+}
+
+:root[data-theme='dark'] .metric-chip {
+  background: rgba(139, 207, 112, 0.12);
+  color: var(--secondary-color);
+  border-color: rgba(139, 207, 112, 0.18);
+}
+
+:root[data-theme='dark'] .selected-node-info {
+  color: #aed7ff;
+  background-color: rgba(60, 108, 163, 0.12);
+  border-color: rgba(60, 108, 163, 0.2);
+}
+
+:root[data-theme='dark'] .selected-node-info strong {
+  color: #d6ecff;
+}
+
+:root[data-theme='dark'] .selected-node-info .tank-specs {
+  color: #b8d7f6;
+}
+
+:root[data-theme='dark'] .selected-node-info .time-range-info {
+  color: #9fd57e;
+}
+
+:root[data-theme='dark'] .prediction-label-large {
+  color: var(--secondary-color);
+}
+
+:root[data-theme='dark'] .prediction-icon {
+  color: #f4d79e;
+}
+
+:root[data-theme='dark'] .no-data-icon {
+  color: #60736a;
+}
+
+:root[data-theme='dark'] .nodes-table thead {
+  color: #09110e;
 }
 
 .no-data {
@@ -1265,6 +1371,19 @@ textarea {
     gap: 24px;
   }
 
+  .navbar {
+    padding: 12px 18px;
+    min-height: auto;
+  }
+
+  .navbar-center {
+    padding: 0 16px;
+  }
+
+  .graphs-container {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+
   .nodes-table {
     min-width: 700px;
   }
@@ -1276,7 +1395,27 @@ textarea {
   }
 
   .navbar {
-    padding: 0 15px;
+    padding: 12px 14px;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .navbar-left,
+  .navbar-right {
+    width: auto;
+  }
+
+  .navbar-center {
+    text-align: left;
+    padding: 0;
+    order: 3;
+    width: 100%;
+  }
+
+  .navbar-right {
+    margin-left: auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .navbar-title {
@@ -1286,6 +1425,27 @@ textarea {
   .navbar-subtitle,
   .brand-chip {
     display: none;
+  }
+
+  .navbar-tagline {
+    font-size: 0.7rem;
+    line-height: 1.4;
+  }
+
+  .logo {
+    width: 58px;
+    height: 58px;
+    border-radius: 16px;
+  }
+
+  .logo-img {
+    width: 44px;
+    height: 44px;
+  }
+
+  .theme-toggle-btn span,
+  .logout-btn {
+    font-size: 0.85rem;
   }
 
   .main-content {
@@ -1304,7 +1464,9 @@ textarea {
   .prediction-form-grid,
   .model-stat-grid,
   .form-row,
-  .graphs-container {
+  .graphs-container,
+  .comparison-hero-grid,
+  .comparison-chart-grid {
     grid-template-columns: 1fr;
     width: 100%;
   }
@@ -1340,6 +1502,16 @@ textarea {
   .cards-container {
     grid-template-columns: 1fr;
   }
+
+  .graph-card,
+  .panel-card,
+  .node-form,
+  .form-info,
+  .comparison-winner-card,
+  .comparison-summary-card,
+  .comparison-table-card {
+    padding: 20px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -1358,5 +1530,34 @@ textarea {
   .prediction-highlight strong,
   .confidence-value-overlay {
     font-size: 1.6rem;
+  }
+
+  .navbar {
+    padding: 10px 12px;
+  }
+
+  .theme-toggle-btn,
+  .logout-btn,
+  .secondary-btn,
+  .submit-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .navbar-right {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .prediction-header-actions,
+  .comparison-badge-row {
+    width: 100%;
+  }
+
+  .graph-card-header,
+  .panel-heading,
+  .comparison-summary-row {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

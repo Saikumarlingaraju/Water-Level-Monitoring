@@ -2,6 +2,19 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../auth';
+import config from '../config';
+
+const getRegisterErrorMessage = (requestError) => {
+  if (requestError.response?.data?.detail) {
+    return requestError.response.data.detail;
+  }
+
+  if (requestError.request) {
+    return `Cannot reach the backend at ${config.API_BASE_URL}. Start the API server or set REACT_APP_API_BASE_URL.`;
+  }
+
+  return 'Unable to create account';
+};
 
 const Register = () => {
   const { register } = useAuth();
@@ -24,7 +37,7 @@ const Register = () => {
       await register(formData);
       navigate('/', { replace: true });
     } catch (requestError) {
-      setError(requestError.response?.data?.detail || 'Unable to create account');
+      setError(getRegisterErrorMessage(requestError));
     } finally {
       setLoading(false);
     }
