@@ -2,7 +2,7 @@ import os
 import random
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from pathlib import Path
 from typing import List, Optional
@@ -11,8 +11,11 @@ import psycopg2
 import requests
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+from passlib.context import CryptContext
 from pydantic import BaseModel, Field
 
 try:
@@ -61,6 +64,9 @@ DEFAULT_MODEL_CLASSES = [
 ]
 MODEL_VERSION = os.environ.get("MODEL_VERSION", "1.0")
 MODEL_ACCURACY = float(os.environ.get("MODEL_ACCURACY", "0.85"))
+AUTH_SECRET_KEY = os.environ.get("AUTH_SECRET_KEY", "change-this-secret-in-production")
+AUTH_ALGORITHM = "HS256"
+AUTH_TOKEN_EXPIRE_MINUTES = int(os.environ.get("AUTH_TOKEN_EXPIRE_MINUTES", "720"))
 MODEL_PATH_CANDIDATES = [
     BASE_DIR / "saved_models" / "best_model.h5",
     BASE_DIR / "saved_models" / "LSTM_model.h5",
@@ -80,6 +86,8 @@ TEST_MODE = env_flag("TEST_MODE", True)
 ENABLE_SENSOR_COLLECTOR = env_flag("ENABLE_SENSOR_COLLECTOR", True)
 SENSOR_POLL_SECONDS = int(os.environ.get("SENSOR_POLL_SECONDS", "20"))
 ALLOWED_ORIGINS, ALLOW_CREDENTIALS = get_cors_settings()
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 # Added CORS middleware
 app.add_middleware(
@@ -139,6 +147,16 @@ def create_tables():
         tank_width_cm FLOAT,
         lat FLOAT,
         long FLOAT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(80) UNIQUE NOT NULL,
+        full_name VARCHAR(120),
+        password_hash VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
@@ -267,6 +285,126 @@ class PredictionRequest(BaseModel):
     distance: float
     temperature: float
     time_features: List[float] = Field(default_factory=list)
+
+
+class UserRegisterRequest(BaseModel):
+
+    username: str = Field(min_length=3, max_length=80)
+    full_name: str = Field(min_length=2, max_length=120)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class UserLoginRequest(BaseModel):
+
+    username: str
+    password: str
+
+
+class UserProfile(BaseModel):
+
+    id: int
+    username: str
+    full_name: Optional[str] = None
+    created_at: datetime
+
+
+class AuthResponse(BaseModel):
+
+    access_token: str
+    token_type: str = "bearer"
+    user: UserProfile
+
+
+def hash_password(password: str) -> str:
+
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def create_access_token(username: str) -> str:
+
+    expires_delta = timedelta(minutes=AUTH_TOKEN_EXPIRE_MINUTES)
+    payload = {
+        "sub": username,
+        "exp": datetime.utcnow() + expires_delta,
+    }
+    return jwt.encode(payload, AUTH_SECRET_KEY, algorithm=AUTH_ALGORITHM)
+
+
+def get_user_by_username(username: str):
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, username, full_name, password_hash, created_at
+        FROM users
+        WHERE username = %s
+        """,
+        (username,),
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if row is None:
+        return None
+
+    return {
+        "id": row[0],
+        "username": row[1],
+        "full_name": row[2],
+        "password_hash": row[3],
+        "created_at": row[4],
+    }
+
+
+def build_user_profile(user_record) -> UserProfile:
+
+    return UserProfile(
+        id=user_record["id"],
+        username=user_record["username"],
+        full_name=user_record.get("full_name"),
+        created_at=user_record["created_at"],
+    )
+
+
+def authenticate_user(username: str, password: str):
+
+    user = get_user_by_username(username)
+
+    if user is None or not verify_password(password, user["password_hash"]):
+        return None
+
+    return user
+
+
+def get_current_user(token: str = Depends(oauth2_scheme)) -> UserProfile:
+
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    try:
+        payload = jwt.decode(token, AUTH_SECRET_KEY, algorithms=[AUTH_ALGORITHM])
+        username = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError as exc:
+        raise credentials_exception from exc
+
+    user = get_user_by_username(username)
+
+    if user is None:
+        raise credentials_exception
+
+    return build_user_profile(user)
 
 
 def resolve_model_classes(output_dim: Optional[int]) -> List[str]:
@@ -427,12 +565,61 @@ def save_prediction_record(payload: PredictionRequest, label: str, confidence: f
     return record_id, created_at
 
 
+@app.post("/api/v1/auth/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+def register_user(payload: UserRegisterRequest):
+
+    existing_user = get_user_by_username(payload.username)
+    if existing_user is not None:
+        raise HTTPException(status_code=409, detail="Username already exists")
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO users (username, full_name, password_hash)
+        VALUES (%s, %s, %s)
+        RETURNING id, username, full_name, created_at
+        """,
+        (payload.username, payload.full_name, hash_password(payload.password)),
+    )
+    row = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    user_profile = UserProfile(
+        id=row[0],
+        username=row[1],
+        full_name=row[2],
+        created_at=row[3],
+    )
+    access_token = create_access_token(user_profile.username)
+    return AuthResponse(access_token=access_token, user=user_profile)
+
+
+@app.post("/api/v1/auth/login", response_model=AuthResponse)
+def login_user(payload: UserLoginRequest):
+
+    user = authenticate_user(payload.username, payload.password)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    access_token = create_access_token(user["username"])
+    return AuthResponse(access_token=access_token, user=build_user_profile(user))
+
+
+@app.get("/api/v1/auth/me", response_model=UserProfile)
+def read_current_user(current_user: UserProfile = Depends(get_current_user)):
+
+    return current_user
+
+
 # ==============================
 # POST API
 # ==============================
 @app.post("/tank-parameters")
 @app.post("/api/v1/tank-sensorparameters")
-def create_tank_parameters(data: TankParameters):
+def create_tank_parameters(data: TankParameters, current_user: UserProfile = Depends(get_current_user)):
 
     conn = get_connection()
     cur = conn.cursor()
@@ -469,7 +656,7 @@ def create_tank_parameters(data: TankParameters):
 # ==============================
 @app.get("/tank-parameters")
 @app.get("/api/v1/tank-sensorparameters")
-def get_tank_parameters():
+def get_tank_parameters(current_user: UserProfile = Depends(get_current_user)):
 
     conn = get_connection()
     cur = conn.cursor()
@@ -502,7 +689,11 @@ def get_tank_parameters():
 # ==============================
 @app.get("/sensor-data")
 @app.get("/api/v1/sensor-data")
-def get_sensor_data(node_id: Optional[str] = None, limit: int = Query(default=100, ge=1, le=500)):
+def get_sensor_data(
+    node_id: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    current_user: UserProfile = Depends(get_current_user),
+):
 
     conn = get_connection()
     cur = conn.cursor()
@@ -565,7 +756,7 @@ def get_health():
 
 
 @app.post("/api/v1/predict")
-def predict_water_activity(payload: PredictionRequest):
+def predict_water_activity(payload: PredictionRequest, current_user: UserProfile = Depends(get_current_user)):
 
     source = "ml_model"
 
@@ -595,7 +786,7 @@ def predict_water_activity(payload: PredictionRequest):
 
 
 @app.get("/api/v1/model-info")
-def get_model_info():
+def get_model_info(current_user: UserProfile = Depends(get_current_user)):
 
     last_trained = None
     model_name = None
@@ -617,7 +808,10 @@ def get_model_info():
 
 
 @app.get("/api/v1/predictions-history")
-def get_predictions_history(limit: int = Query(default=100, ge=1, le=500)):
+def get_predictions_history(
+    limit: int = Query(default=100, ge=1, le=500),
+    current_user: UserProfile = Depends(get_current_user),
+):
 
     conn = get_connection()
     cur = conn.cursor()

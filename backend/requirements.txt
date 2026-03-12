@@ -6,3 +6,5 @@ pydantic
 python-dotenv
 numpy
 tensorflow
+python-jose[cryptography]
+passlib[bcrypt]

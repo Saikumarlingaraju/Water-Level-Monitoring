@@ -1,7 +1,10 @@
 import React from 'react';
+import { useAuth } from '../auth';
 import config from '../config';
 
 const Navbar = ({ onToggleSidebar }) => {
+  const { logout, user } = useAuth();
+
   return (
     <nav className="navbar">
       <div className="navbar-left">
@@ -23,7 +26,8 @@ const Navbar = ({ onToggleSidebar }) => {
       </div>
 
       <div className="navbar-right">
-        <div className="brand-chip">HITAM</div>
+        <div className="brand-chip">{user?.full_name || config.BRAND_SHORT_NAME}</div>
+        <button className="logout-btn" type="button" onClick={logout}>Logout</button>
       </div>
     </nav>
   );
