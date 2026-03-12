@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 
@@ -76,7 +76,7 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem(AUTH_STORAGE_KEY);
   };
 
-  const value = useMemo(() => ({
+  const value = {
     token,
     user,
     isLoading,
@@ -84,7 +84,7 @@ export const AuthProvider = ({ children }) => {
     login,
     register,
     logout,
-  }), [token, user, isLoading]);
+  };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
