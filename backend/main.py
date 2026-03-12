@@ -289,6 +289,22 @@ def generate_test_data():
 # ==============================
 # SENSOR DATA COLLECTOR
 # ==============================
+def get_all_registered_node_ids():
+    """Return list of all node_ids from tank_sensorparameters, falling back to NODE_ID."""
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT node_id FROM tank_sensorparameters")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        if rows:
+            return [r[0] for r in rows]
+    except Exception as e:
+        print("Error fetching registered nodes:", e)
+    return [NODE_ID]
+
+
 def sensor_collector():
 
     global last_created_at
@@ -320,41 +336,51 @@ def sensor_collector():
 
             print("NEW DATA:", distance, temperature, created_at)
 
+            node_ids = get_all_registered_node_ids()
+
             conn = get_connection()
             cur = conn.cursor()
 
-            cur.execute("""
-            INSERT INTO sensor_data
-            (node_id, field1, field2, created_at)
-            VALUES (%s,%s,%s,%s)
-            """,
-                        (NODE_ID, distance, temperature, created_at))
+            for nid in node_ids:
+                # In test mode give each node slightly varied readings
+                if TEST_MODE:
+                    node_distance = round(distance + random.uniform(-5, 5), 1)
+                    node_temperature = round(temperature + random.uniform(-1, 1), 1)
+                else:
+                    node_distance = distance
+                    node_temperature = temperature
+
+                cur.execute("""
+                INSERT INTO sensor_data
+                (node_id, field1, field2, created_at)
+                VALUES (%s,%s,%s,%s)
+                """,
+                            (nid, node_distance, node_temperature, created_at))
+
+                realtime_manager.publish(
+                    build_realtime_prediction_event(
+                        nid,
+                        node_distance,
+                        node_temperature,
+                        created_at,
+                    )
+                )
+
+                sensor_payload = PredictionRequest(node_id=nid, distance=node_distance, temperature=node_temperature)
+                sensor_label, sensor_confidence, _ = run_prediction(sensor_payload)
+                process_anomaly_alerts(
+                    node_id=nid,
+                    distance=node_distance,
+                    temperature=node_temperature,
+                    prediction=sensor_label,
+                    confidence=sensor_confidence,
+                )
 
             conn.commit()
-
             cur.close()
             conn.close()
 
-            realtime_manager.publish(
-                build_realtime_prediction_event(
-                    NODE_ID,
-                    distance,
-                    temperature,
-                    created_at,
-                )
-            )
-
-            sensor_payload = PredictionRequest(node_id=NODE_ID, distance=distance, temperature=temperature)
-            sensor_label, sensor_confidence, _ = run_prediction(sensor_payload)
-            process_anomaly_alerts(
-                node_id=NODE_ID,
-                distance=distance,
-                temperature=temperature,
-                prediction=sensor_label,
-                confidence=sensor_confidence,
-            )
-
-            print("Sensor data inserted")
+            print(f"Sensor data inserted for nodes: {node_ids}")
 
         except Exception as e:
 
