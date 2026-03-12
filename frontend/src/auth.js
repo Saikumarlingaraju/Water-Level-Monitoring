@@ -7,6 +7,21 @@ import config from './config';
 const AUTH_STORAGE_KEY = 'wlm-auth';
 const AuthContext = createContext(null);
 
+export const getStoredAuthToken = () => {
+  const saved = localStorage.getItem(AUTH_STORAGE_KEY);
+
+  if (!saved) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(saved).token || null;
+  } catch (error) {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    return null;
+  }
+};
+
 const setAxiosAuthHeader = (token) => {
   if (token) {
     axios.defaults.headers.common.Authorization = `Bearer ${token}`;
@@ -23,18 +38,17 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     const restoreSession = async () => {
-      const saved = localStorage.getItem(AUTH_STORAGE_KEY);
+      const savedToken = getStoredAuthToken();
 
-      if (!saved) {
+      if (!savedToken) {
         setIsLoading(false);
         return;
       }
 
       try {
-        const parsed = JSON.parse(saved);
-        setAxiosAuthHeader(parsed.token);
+        setAxiosAuthHeader(savedToken);
         const response = await axios.get(config.AUTH_ME_URL);
-        setToken(parsed.token);
+        setToken(savedToken);
         setUser(response.data);
       } catch (error) {
         localStorage.removeItem(AUTH_STORAGE_KEY);

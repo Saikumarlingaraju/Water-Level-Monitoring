@@ -1,3 +1,4 @@
+import asyncio
 import os
 import random
 import threading
@@ -11,7 +12,7 @@ import psycopg2
 import requests
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -88,6 +89,44 @@ SENSOR_POLL_SECONDS = int(os.environ.get("SENSOR_POLL_SECONDS", "20"))
 ALLOWED_ORIGINS, ALLOW_CREDENTIALS = get_cors_settings()
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+
+class RealtimeConnectionManager:
+
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        stale_connections = []
+
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except RuntimeError:
+                stale_connections.append(connection)
+            except Exception:
+                stale_connections.append(connection)
+
+        for connection in stale_connections:
+            self.disconnect(connection)
+
+    def publish(self, message: dict):
+        loop = getattr(app.state, "websocket_loop", None)
+        if loop is None or loop.is_closed() or not self.active_connections:
+            return
+
+        asyncio.run_coroutine_threadsafe(self.broadcast(message), loop)
+
+
+realtime_manager = RealtimeConnectionManager()
 
 # Added CORS middleware
 app.add_middleware(
@@ -257,6 +296,15 @@ def sensor_collector():
             cur.close()
             conn.close()
 
+            realtime_manager.publish(
+                build_realtime_prediction_event(
+                    NODE_ID,
+                    distance,
+                    temperature,
+                    created_at,
+                )
+            )
+
             print("Sensor data inserted")
 
         except Exception as e:
@@ -405,6 +453,19 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> UserProfile:
         raise credentials_exception
 
     return build_user_profile(user)
+
+
+def get_user_from_token(token: str):
+
+    try:
+        payload = jwt.decode(token, AUTH_SECRET_KEY, algorithms=[AUTH_ALGORITHM])
+        username = payload.get("sub")
+        if username is None:
+            return None
+    except JWTError:
+        return None
+
+    return get_user_by_username(username)
 
 
 def resolve_model_classes(output_dim: Optional[int]) -> List[str]:
@@ -565,6 +626,42 @@ def save_prediction_record(payload: PredictionRequest, label: str, confidence: f
     return record_id, created_at
 
 
+def run_prediction(payload: PredictionRequest):
+
+    source = "ml_model"
+
+    if ml_model is None:
+        return fallback_predict(payload)
+
+    prepared_input = prepare_model_input(payload)
+    prediction_scores = ml_model.predict(prepared_input, verbose=0)[0]
+
+    if np is None:
+        raise HTTPException(status_code=500, detail="numpy is required for predictions")
+
+    predicted_index = int(np.argmax(prediction_scores))
+    label = model_classes[predicted_index]
+    confidence = float(prediction_scores[predicted_index])
+    return label, confidence, source
+
+
+def build_realtime_prediction_event(node_id: str, distance: float, temperature: float, created_at: str):
+
+    payload = PredictionRequest(node_id=node_id, distance=distance, temperature=temperature)
+    label, confidence, source = run_prediction(payload)
+
+    return {
+        "type": "sensor_prediction",
+        "node_id": node_id,
+        "distance": distance,
+        "temperature": temperature,
+        "prediction": label,
+        "confidence": round(confidence, 4),
+        "created_at": created_at,
+        "model_source": source,
+    }
+
+
 @app.post("/api/v1/auth/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 def register_user(payload: UserRegisterRequest):
 
@@ -612,6 +709,31 @@ def login_user(payload: UserLoginRequest):
 def read_current_user(current_user: UserProfile = Depends(get_current_user)):
 
     return current_user
+
+
+@app.websocket("/api/v1/ws/realtime")
+async def realtime_predictions_socket(websocket: WebSocket, token: str = Query(default="")):
+
+    user = get_user_from_token(token)
+
+    if user is None:
+        await websocket.close(code=1008)
+        return
+
+    await realtime_manager.connect(websocket)
+    await websocket.send_json({
+        "type": "connection_ack",
+        "message": "Realtime prediction stream connected",
+        "username": user["username"],
+    })
+
+    try:
+        while True:
+            message = await websocket.receive_text()
+            if message == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        realtime_manager.disconnect(websocket)
 
 
 # ==============================
@@ -758,22 +880,21 @@ def get_health():
 @app.post("/api/v1/predict")
 def predict_water_activity(payload: PredictionRequest, current_user: UserProfile = Depends(get_current_user)):
 
-    source = "ml_model"
-
-    if ml_model is None:
-        label, confidence, source = fallback_predict(payload)
-    else:
-        prepared_input = prepare_model_input(payload)
-        prediction_scores = ml_model.predict(prepared_input, verbose=0)[0]
-
-        if np is None:
-            raise HTTPException(status_code=500, detail="numpy is required for predictions")
-
-        predicted_index = int(np.argmax(prediction_scores))
-        label = model_classes[predicted_index]
-        confidence = float(prediction_scores[predicted_index])
+    label, confidence, source = run_prediction(payload)
 
     record_id, created_at = save_prediction_record(payload, label, confidence)
+
+    realtime_manager.publish({
+        "type": "manual_prediction",
+        "id": record_id,
+        "node_id": payload.node_id,
+        "distance": payload.distance,
+        "temperature": payload.temperature,
+        "prediction": label,
+        "confidence": round(confidence, 4),
+        "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
+        "model_source": source,
+    })
 
     return {
         "id": record_id,
@@ -845,7 +966,9 @@ def get_predictions_history(
 # START BACKGROUND COLLECTOR
 # ==============================
 @app.on_event("startup")
-def start_background_tasks():
+async def start_background_tasks():
+
+    app.state.websocket_loop = asyncio.get_running_loop()
 
     create_tables()
     load_prediction_model()

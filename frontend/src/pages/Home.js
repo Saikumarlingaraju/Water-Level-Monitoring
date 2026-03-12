@@ -19,6 +19,7 @@ import {
 import axios from 'axios';
 
 import config from '../config';
+import { getStoredAuthToken } from '../auth';
 
 const CHART_COLORS = ['#0f6d63', '#f08b46', '#f6c453', '#1d8f7b', '#2d4356'];
 
@@ -82,6 +83,22 @@ const buildFallbackNodesFromSensorData = (sensorItems) => {
   }));
 };
 
+const matchesPrediction = (left, right) => (
+  left?.node_id === right?.node_id
+  && left?.prediction === right?.prediction
+  && Number(left?.confidence) === Number(right?.confidence)
+  && left?.created_at === right?.created_at
+);
+
+const mergePredictionItems = (currentItems, incomingItem, limit) => {
+  const nextItems = [incomingItem, ...(currentItems || []).filter((item) => !matchesPrediction(item, incomingItem))];
+  return nextItems.slice(0, limit);
+};
+
+const isRealtimeEventInRange = (event, selectedTimeRange, customFromDate, customToDate) => {
+  return filterByTimeRange([event], selectedTimeRange, customFromDate, customToDate, 'created_at').length > 0;
+};
+
 const Home = () => {
   const [waterLevel, setWaterLevel] = useState(0);
   const [temperature, setTemperature] = useState(0);
@@ -98,6 +115,7 @@ const Home = () => {
   const [customToDate, setCustomToDate] = useState('');
   const [predictionHistory, setPredictionHistory] = useState([]);
   const [modelInfo, setModelInfo] = useState(null);
+  const [realtimeStatus, setRealtimeStatus] = useState('connecting');
 
   // Mapping between node IDs and tank IDs for sensor data
   const getActualTankId = (nodeId) => {
@@ -344,6 +362,121 @@ const Home = () => {
     }
   }, [selectedNode, selectedTimeRange, customFromDate, customToDate, fetchSensorData]);
 
+  useEffect(() => {
+    const authToken = getStoredAuthToken();
+
+    if (!authToken) {
+      setRealtimeStatus('offline');
+      return undefined;
+    }
+
+    let socket;
+    let reconnectTimer;
+    let disposed = false;
+
+    const connect = () => {
+      setRealtimeStatus('connecting');
+      socket = new WebSocket(`${config.REALTIME_WS_URL}?token=${encodeURIComponent(authToken)}`);
+
+      socket.onopen = () => {
+        if (!disposed) {
+          setRealtimeStatus('live');
+        }
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+
+          if (!['sensor_prediction', 'manual_prediction'].includes(payload.type)) {
+            return;
+          }
+
+          const actualNodeId = getActualTankId(selectedNode);
+
+          if (actualNodeId && payload.node_id !== actualNodeId) {
+            return;
+          }
+
+          if (!isRealtimeEventInRange(payload, selectedTimeRange, customFromDate, customToDate)) {
+            return;
+          }
+
+          const selectedNodeData = nodes.find((node) => node.id === selectedNode || node.id === payload.node_id);
+          const tankHeight = selectedNodeData?.tank_height || 200;
+          const eventTimestamp = new Date(payload.created_at);
+          const waterLevelPercentage = Math.min(
+            100,
+            Math.round(((tankHeight - payload.distance) / tankHeight) * 100)
+          );
+
+          setHasDataForNode(true);
+          setNodeDataMessage('');
+          setWaterLevel(waterLevelPercentage);
+          setTemperature(Math.round(payload.temperature * 10) / 10);
+          setLastUpdated(eventTimestamp);
+          setWaterLevelData((current) => ([
+            ...current,
+            {
+              time: eventTimestamp.toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+              }),
+              value: waterLevelPercentage,
+              raw_cm: payload.distance,
+            },
+          ]).slice(-30));
+          setTemperatureData((current) => ([
+            ...current,
+            {
+              time: eventTimestamp.toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+              }),
+              value: Math.round(payload.temperature * 10) / 10,
+            },
+          ]).slice(-30));
+          setPredictionHistory((current) => mergePredictionItems(current, {
+            id: `realtime-${payload.node_id}-${payload.created_at}`,
+            node_id: payload.node_id,
+            prediction: payload.prediction,
+            confidence: payload.confidence,
+            distance: payload.distance,
+            temperature: payload.temperature,
+            created_at: payload.created_at,
+          }, 150));
+        } catch (messageError) {
+          console.error('Error processing realtime update:', messageError);
+        }
+      };
+
+      socket.onerror = () => {
+        if (!disposed) {
+          setRealtimeStatus('offline');
+        }
+      };
+
+      socket.onclose = () => {
+        if (disposed) {
+          return;
+        }
+
+        setRealtimeStatus('offline');
+        reconnectTimer = window.setTimeout(connect, 3000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(reconnectTimer);
+      if (socket && socket.readyState < WebSocket.CLOSING) {
+        socket.close();
+      }
+    };
+  }, [customFromDate, customToDate, nodes, selectedNode, selectedTimeRange]);
+
   const latestPrediction = predictionHistory[0] || null;
 
   const predictionDistribution = useMemo(() => {
@@ -442,16 +575,19 @@ const Home = () => {
             </div>
           )}
         </div>
-        {lastUpdated && (
-          <div className="last-updated">
-            Last updated: {lastUpdated.toLocaleTimeString('en-US', {
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit'
-            })}
-            {loading && <span className="update-indicator"> • Updating...</span>}
-          </div>
-        )}
+        <div className="last-updated">
+          <span className={`realtime-badge ${realtimeStatus}`}>{realtimeStatus === 'live' ? 'Live stream connected' : realtimeStatus === 'connecting' ? 'Connecting stream...' : 'Realtime offline'}</span>
+          {lastUpdated && (
+            <>
+              Last updated: {lastUpdated.toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+              })}
+            </>
+          )}
+          {loading && <span className="update-indicator"> • Updating...</span>}
+        </div>
       </div>
 
       {/* Data Status Message */}

@@ -15,6 +15,7 @@ import {
 } from 'recharts';
 
 import config from '../config';
+import { getStoredAuthToken } from '../auth';
 
 const CONFIDENCE_COLORS = ['#0f6d63', '#f08b46'];
 
@@ -29,6 +30,18 @@ const parseTimeFeatures = (value) => {
     .filter((item) => !Number.isNaN(item));
 };
 
+const matchesPrediction = (left, right) => (
+  left?.node_id === right?.node_id
+  && left?.prediction === right?.prediction
+  && Number(left?.confidence) === Number(right?.confidence)
+  && left?.created_at === right?.created_at
+);
+
+const mergePredictionItems = (currentItems, incomingItem, limit) => {
+  const nextItems = [incomingItem, ...(currentItems || []).filter((item) => !matchesPrediction(item, incomingItem))];
+  return nextItems.slice(0, limit);
+};
+
 const Prediction = () => {
   const [modelInfo, setModelInfo] = useState(null);
   const [predictionHistory, setPredictionHistory] = useState([]);
@@ -36,6 +49,7 @@ const Prediction = () => {
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState('');
+  const [realtimeStatus, setRealtimeStatus] = useState('connecting');
   const [inputData, setInputData] = useState({
     node_id: 'NODE_001',
     distance: '52.4',
@@ -66,6 +80,82 @@ const Prediction = () => {
     fetchPredictionHistory().catch((requestError) => {
       setError(`Unable to load prediction history: ${requestError.message}`);
     });
+  }, []);
+
+  useEffect(() => {
+    const authToken = getStoredAuthToken();
+
+    if (!authToken) {
+      setRealtimeStatus('offline');
+      return undefined;
+    }
+
+    let socket;
+    let reconnectTimer;
+    let disposed = false;
+
+    const connect = () => {
+      setRealtimeStatus('connecting');
+      socket = new WebSocket(`${config.REALTIME_WS_URL}?token=${encodeURIComponent(authToken)}`);
+
+      socket.onopen = () => {
+        if (!disposed) {
+          setRealtimeStatus('live');
+        }
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+
+          if (!['sensor_prediction', 'manual_prediction'].includes(payload.type)) {
+            return;
+          }
+
+          const nextPrediction = {
+            id: `realtime-${payload.node_id}-${payload.created_at}`,
+            node_id: payload.node_id,
+            prediction: payload.prediction,
+            confidence: payload.confidence,
+            distance: payload.distance,
+            temperature: payload.temperature,
+            created_at: payload.created_at,
+            model_source: payload.model_source,
+          };
+
+          setPrediction(nextPrediction);
+          setPredictionHistory((current) => mergePredictionItems(current, nextPrediction, 12));
+          setHistoryLoading(false);
+        } catch (messageError) {
+          console.error('Error processing realtime prediction:', messageError);
+        }
+      };
+
+      socket.onerror = () => {
+        if (!disposed) {
+          setRealtimeStatus('offline');
+        }
+      };
+
+      socket.onclose = () => {
+        if (disposed) {
+          return;
+        }
+
+        setRealtimeStatus('offline');
+        reconnectTimer = window.setTimeout(connect, 3000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(reconnectTimer);
+      if (socket && socket.readyState < WebSocket.CLOSING) {
+        socket.close();
+      }
+    };
   }, []);
 
   const handleChange = (event) => {
@@ -145,9 +235,12 @@ const Prediction = () => {
           <h2 className="page-title">Prediction Lab</h2>
           <p className="page-description">Run water activity inference, inspect the deployed model, and review recent predictions.</p>
         </div>
-        <button className="secondary-btn" type="button" onClick={handleUseLatestPrediction}>
-          Use Latest History Row
-        </button>
+        <div className="prediction-header-actions">
+          <span className={`realtime-badge ${realtimeStatus}`}>{realtimeStatus === 'live' ? 'Live stream connected' : realtimeStatus === 'connecting' ? 'Connecting stream...' : 'Realtime offline'}</span>
+          <button className="secondary-btn" type="button" onClick={handleUseLatestPrediction}>
+            Use Latest History Row
+          </button>
+        </div>
       </div>
 
       {error && <div className="message error">{error}</div>}
