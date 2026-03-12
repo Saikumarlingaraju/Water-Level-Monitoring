@@ -260,8 +260,8 @@ def create_tables():
 # ==============================
 REAL_DATA_WITH_CURRENT_TIME = False
 
-# Node id of sensor
-NODE_ID = "NODE_001"
+# Node id of sensor — override via NODE_ID env var in production
+NODE_ID = os.environ.get("NODE_ID", "NODE_001")
 
 # ThingSpeak API
 url = "https://api.thingspeak.com/channels/3290444/feeds.json?api_key=AWP8F08WA7SLO5EQ&results=-1"
