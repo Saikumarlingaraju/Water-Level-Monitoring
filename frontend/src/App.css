@@ -398,6 +398,7 @@ textarea {
 
 .home-page,
 .prediction-page,
+.comparison-page,
 .node-creation-page {
   max-width: 1360px;
   margin: 0 auto;
@@ -421,6 +422,83 @@ textarea {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.comparison-header {
+  align-items: flex-start;
+}
+
+.comparison-badge-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.comparison-hero-grid,
+.comparison-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 24px;
+  margin-bottom: 28px;
+}
+
+.comparison-winner-card,
+.comparison-summary-card,
+.comparison-table-card {
+  padding: 28px;
+}
+
+.comparison-kicker {
+  display: inline-flex;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(86, 157, 64, 0.14);
+  color: var(--secondary-color);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.74rem;
+}
+
+.comparison-winner-card h3 {
+  margin-top: 18px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.9rem;
+}
+
+.comparison-copy {
+  margin-top: 12px;
+  color: var(--muted-text);
+  line-height: 1.65;
+}
+
+.comparison-copy-compact {
+  margin-top: 18px;
+}
+
+.comparison-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid rgba(33, 49, 38, 0.08);
+}
+
+.comparison-summary-row:first-child {
+  padding-top: 0;
+}
+
+.comparison-summary-row:last-of-type {
+  border-bottom: none;
+}
+
+.comparison-summary-label {
+  color: var(--muted-text);
+}
+
+.comparison-table td:last-child,
+.comparison-table th:last-child {
+  min-width: 280px;
 }
 
 .page-title {

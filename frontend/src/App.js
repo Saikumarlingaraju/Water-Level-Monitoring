@@ -5,6 +5,7 @@ import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import Home from './pages/Home';
 import Login from './pages/Login';
+import ModelComparison from './pages/ModelComparison';
 import NodeCreation from './pages/NodeCreation';
 import Prediction from './pages/Prediction';
 import Register from './pages/Register';
@@ -20,6 +21,7 @@ function ProtectedLayout({ sidebarOpen, toggleSidebar, closeSidebar }) {
           <Route path="/" element={<Home />} />
           <Route path="/node-creation" element={<NodeCreation />} />
           <Route path="/prediction" element={<Prediction />} />
+          <Route path="/model-comparison" element={<ModelComparison />} />
         </Routes>
       </main>
     </div>
