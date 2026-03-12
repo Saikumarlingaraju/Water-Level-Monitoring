@@ -1,9 +1,11 @@
 import asyncio
+import csv
 import os
 import random
 import threading
 import time
 from datetime import datetime, timedelta
+from io import StringIO
 import json
 from pathlib import Path
 from typing import List, Optional
@@ -12,7 +14,7 @@ import psycopg2
 import requests
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -363,6 +365,34 @@ class AuthResponse(BaseModel):
     user: UserProfile
 
 
+class BatchPredictionItem(BaseModel):
+
+    row_number: int
+    node_id: str
+    distance: float
+    temperature: float
+    time_features: List[float] = Field(default_factory=list)
+    prediction: str
+    confidence: float
+    created_at: datetime
+    model_source: str
+
+
+class BatchPredictionError(BaseModel):
+
+    row_number: int
+    error: str
+
+
+class BatchPredictionResponse(BaseModel):
+
+    total_rows: int
+    processed_rows: int
+    failed_rows: int
+    predictions: List[BatchPredictionItem]
+    errors: List[BatchPredictionError]
+
+
 def hash_password(password: str) -> str:
 
     return pwd_context.hash(password)
@@ -624,6 +654,92 @@ def save_prediction_record(payload: PredictionRequest, label: str, confidence: f
     cur.close()
     conn.close()
     return record_id, created_at
+
+
+def parse_time_features(value: str) -> List[float]:
+
+    if value is None:
+        return []
+
+    stripped = str(value).strip()
+    if not stripped:
+        return []
+
+    features = []
+
+    for item in stripped.split(","):
+        token = item.strip()
+        if not token:
+            continue
+        try:
+            features.append(float(token))
+        except ValueError as error:
+            raise ValueError(f"invalid time_features value '{token}'") from error
+
+    return features
+
+
+def build_prediction_response_item(
+    row_number: int,
+    payload: PredictionRequest,
+    label: str,
+    confidence: float,
+    created_at: datetime,
+    source: str,
+) -> BatchPredictionItem:
+
+    return BatchPredictionItem(
+        row_number=row_number,
+        node_id=payload.node_id,
+        distance=payload.distance,
+        temperature=payload.temperature,
+        time_features=payload.time_features,
+        prediction=label,
+        confidence=round(confidence, 4),
+        created_at=created_at,
+        model_source=source,
+    )
+
+
+def process_batch_prediction_rows(rows: List[dict]) -> BatchPredictionResponse:
+
+    predictions: List[BatchPredictionItem] = []
+    errors: List[BatchPredictionError] = []
+
+    for row_number, row in enumerate(rows, start=2):
+        try:
+            node_id = str(row.get("node_id") or NODE_ID).strip() or NODE_ID
+            distance_raw = row.get("distance")
+            temperature_raw = row.get("temperature")
+
+            if distance_raw in (None, ""):
+                raise ValueError("distance is required")
+            if temperature_raw in (None, ""):
+                raise ValueError("temperature is required")
+
+            payload = PredictionRequest(
+                node_id=node_id,
+                distance=float(distance_raw),
+                temperature=float(temperature_raw),
+                time_features=parse_time_features(row.get("time_features", "")),
+            )
+
+            label, confidence, source = run_prediction(payload)
+            _, created_at = save_prediction_record(payload, label, confidence)
+
+            predictions.append(
+                build_prediction_response_item(row_number, payload, label, confidence, created_at, source)
+            )
+        except Exception as error:
+            errors.append(BatchPredictionError(row_number=row_number, error=str(error)))
+
+    return BatchPredictionResponse(
+        total_rows=len(rows),
+        processed_rows=len(predictions),
+        failed_rows=len(errors),
+        predictions=predictions,
+        errors=errors,
+    )
 
 
 def run_prediction(payload: PredictionRequest):
@@ -904,6 +1020,40 @@ def predict_water_activity(payload: PredictionRequest, current_user: UserProfile
         "created_at": created_at,
         "model_source": source,
     }
+
+
+@app.post("/api/v1/predict/batch", response_model=BatchPredictionResponse)
+async def predict_water_activity_batch(
+    file: UploadFile = File(...),
+    current_user: UserProfile = Depends(get_current_user),
+):
+
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Please upload a CSV file")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded CSV file is empty")
+
+    try:
+        decoded = content.decode("utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise HTTPException(status_code=400, detail="CSV file must be UTF-8 encoded") from error
+
+    reader = csv.DictReader(StringIO(decoded))
+    columns = set(reader.fieldnames or [])
+
+    if not {"distance", "temperature"}.issubset(columns):
+        raise HTTPException(
+            status_code=400,
+            detail="CSV must include distance and temperature columns; optional columns are node_id and time_features",
+        )
+
+    rows = list(reader)
+    if not rows:
+        raise HTTPException(status_code=400, detail="CSV file must contain at least one data row")
+
+    return process_batch_prediction_rows(rows)
 
 
 @app.get("/api/v1/model-info")

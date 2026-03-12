@@ -10,6 +10,7 @@ const config = {
   SENSOR_DATA_URL: `${API_BASE_URL}/sensor-data`,
   TANK_PARAMETERS_URL: `${API_BASE_URL}/tank-parameters`,
   PREDICT_URL: `${API_BASE_URL}/api/v1/predict`,
+  BATCH_PREDICT_URL: `${API_BASE_URL}/api/v1/predict/batch`,
   MODEL_INFO_URL: `${API_BASE_URL}/api/v1/model-info`,
   PREDICTIONS_HISTORY_URL: `${API_BASE_URL}/api/v1/predictions-history`,
   AUTH_LOGIN_URL: `${API_BASE_URL}/api/v1/auth/login`,

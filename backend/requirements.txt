@@ -8,3 +8,4 @@ numpy
 tensorflow
 python-jose[cryptography]
 passlib[bcrypt]
+python-multipart

@@ -18,6 +18,11 @@ import config from '../config';
 import { getStoredAuthToken } from '../auth';
 
 const CONFIDENCE_COLORS = ['#0f6d63', '#f08b46'];
+const SAMPLE_BATCH_CSV = [
+  'node_id,distance,temperature,time_features',
+  'NODE_001,52.4,24.1,"10,30,2"',
+  'NODE_002,81.9,22.7,"14,15,4"',
+].join('\n');
 
 const parseTimeFeatures = (value) => {
   if (!value.trim()) {
@@ -50,6 +55,10 @@ const Prediction = () => {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState('');
   const [realtimeStatus, setRealtimeStatus] = useState('connecting');
+  const [batchFile, setBatchFile] = useState(null);
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchResult, setBatchResult] = useState(null);
+  const [batchError, setBatchError] = useState('');
   const [inputData, setInputData] = useState({
     node_id: 'NODE_001',
     distance: '52.4',
@@ -178,6 +187,50 @@ const Prediction = () => {
       distance: String(latest.distance),
       temperature: String(latest.temperature),
     }));
+  };
+
+  const handleBatchFileChange = (event) => {
+    const selectedFile = event.target.files?.[0] || null;
+    setBatchFile(selectedFile);
+    setBatchError('');
+  };
+
+  const handleDownloadSampleCsv = () => {
+    const blob = new Blob([SAMPLE_BATCH_CSV], { type: 'text/csv;charset=utf-8;' });
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = 'prediction-batch-template.csv';
+    link.click();
+    URL.revokeObjectURL(href);
+  };
+
+  const handleBatchUpload = async () => {
+    if (!batchFile) {
+      setBatchError('Choose a CSV file first.');
+      return;
+    }
+
+    setBatchLoading(true);
+    setBatchError('');
+
+    try {
+      const formData = new FormData();
+      formData.append('file', batchFile);
+
+      const response = await axios.post(config.BATCH_PREDICT_URL, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      setBatchResult(response.data);
+      await fetchPredictionHistory();
+    } catch (requestError) {
+      setBatchError(requestError.response?.data?.detail || requestError.message);
+    } finally {
+      setBatchLoading(false);
+    }
   };
 
   const handlePredict = async (event) => {
@@ -317,6 +370,109 @@ const Prediction = () => {
                 </button>
               </div>
             </form>
+          </div>
+
+          <div className="panel-card batch-upload-card">
+            <div className="panel-heading">
+              <div>
+                <h3>Batch Prediction Upload</h3>
+                <span className="graph-subtitle">Upload a CSV with `distance` and `temperature`; `node_id` and `time_features` are optional.</span>
+              </div>
+              <button className="secondary-btn" type="button" onClick={handleDownloadSampleCsv}>
+                Download CSV Template
+              </button>
+            </div>
+
+            <div className="batch-upload-grid">
+              <div className="form-group prediction-form-span">
+                <label htmlFor="prediction-batch-file">CSV File</label>
+                <input id="prediction-batch-file" type="file" accept=".csv" onChange={handleBatchFileChange} />
+              </div>
+              <div className="batch-upload-actions">
+                <span className="graph-subtitle">Expected columns: `distance`, `temperature`, optional `node_id`, `time_features`.</span>
+                <button className="submit-btn batch-submit-btn" type="button" onClick={handleBatchUpload} disabled={batchLoading}>
+                  {batchLoading ? 'Uploading CSV...' : 'Run Batch Predictions'}
+                </button>
+              </div>
+            </div>
+
+            {batchError && <div className="message error">{batchError}</div>}
+
+            {batchResult && (
+              <div className="batch-results-wrap">
+                <div className="batch-summary-grid">
+                  <div className="model-stat">
+                    <span className="model-stat-label">Rows in CSV</span>
+                    <strong>{batchResult.total_rows}</strong>
+                  </div>
+                  <div className="model-stat">
+                    <span className="model-stat-label">Processed</span>
+                    <strong>{batchResult.processed_rows}</strong>
+                  </div>
+                  <div className="model-stat">
+                    <span className="model-stat-label">Failed</span>
+                    <strong>{batchResult.failed_rows}</strong>
+                  </div>
+                </div>
+
+                {batchResult.predictions?.length > 0 && (
+                  <div className="history-table-wrap">
+                    <table className="nodes-table prediction-table">
+                      <thead>
+                        <tr>
+                          <th>Row</th>
+                          <th>Node</th>
+                          <th>Prediction</th>
+                          <th>Confidence</th>
+                          <th>Distance</th>
+                          <th>Temperature</th>
+                          <th>Time Features</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {batchResult.predictions.map((item) => (
+                          <tr key={`${item.row_number}-${item.created_at}`}>
+                            <td>{item.row_number}</td>
+                            <td>{item.node_id}</td>
+                            <td className="node-id">{item.prediction}</td>
+                            <td>{(item.confidence * 100).toFixed(1)}%</td>
+                            <td>{item.distance}</td>
+                            <td>{item.temperature}</td>
+                            <td>{item.time_features?.join(', ') || 'None'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {batchResult.errors?.length > 0 && (
+                  <div className="batch-errors-wrap">
+                    <div className="panel-heading">
+                      <h3>Rows With Errors</h3>
+                    </div>
+                    <div className="history-table-wrap">
+                      <table className="nodes-table prediction-table">
+                        <thead>
+                          <tr>
+                            <th>Row</th>
+                            <th>Error</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {batchResult.errors.map((item) => (
+                            <tr key={`error-${item.row_number}`}>
+                              <td>{item.row_number}</td>
+                              <td>{item.error}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
