@@ -50,6 +50,7 @@ MODEL_CLASSES=filling,flush,geyser,no_activity,washing_machine
 TEST_MODE=true
 ENABLE_SENSOR_COLLECTOR=true
 SENSOR_POLL_SECONDS=20
+MODEL_PRELOAD_ON_STARTUP=false
 CORS_ALLOW_ORIGINS=https://YOUR-FRONTEND-DOMAIN.vercel.app
 CORS_ALLOW_ORIGIN_REGEX=https://.*\.vercel\.app
 ```

@@ -4,6 +4,7 @@ from email.message import EmailMessage
 import os
 import random
 import smtplib
+import importlib
 import threading
 import time
 from datetime import datetime, timedelta
@@ -27,11 +28,6 @@ try:
     import numpy as np
 except ImportError:
     np = None
-
-try:
-    from tensorflow.keras.models import load_model
-except ImportError:
-    load_model = None
 
 BASE_DIR = Path(__file__).resolve().parent
 # Load environment variables from the backend directory so imports work regardless of cwd.
@@ -105,9 +101,13 @@ ml_model = None
 model_path = None
 model_classes = DEFAULT_MODEL_CLASSES
 model_metadata = {}
+model_load_attempted = False
+model_load_error = None
+model_load_lock = threading.Lock()
 TEST_MODE = env_flag("TEST_MODE", True)
 ENABLE_SENSOR_COLLECTOR = env_flag("ENABLE_SENSOR_COLLECTOR", True)
 SENSOR_POLL_SECONDS = int(os.environ.get("SENSOR_POLL_SECONDS", "20"))
+MODEL_PRELOAD_ON_STARTUP = env_flag("MODEL_PRELOAD_ON_STARTUP", False)
 ALLOWED_ORIGINS, ALLOW_CREDENTIALS, ALLOWED_ORIGIN_REGEX = get_cors_settings()
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -581,14 +581,17 @@ def resolve_model_classes(output_dim: Optional[int]) -> List[str]:
 
 def load_model_metadata():
 
-    global model_metadata
+    global model_metadata, model_classes
 
     for candidate in MODEL_METADATA_CANDIDATES:
         if candidate.exists():
             model_metadata = json.loads(candidate.read_text(encoding="utf-8"))
+            metadata_classes = model_metadata.get("classes") or []
+            model_classes = metadata_classes or resolve_model_classes(None)
             return
 
     model_metadata = {}
+    model_classes = resolve_model_classes(None)
 
 
 def get_model_input_spec():
@@ -661,39 +664,65 @@ def fallback_predict(payload: PredictionRequest):
 
 def load_prediction_model():
 
-    global ml_model, model_path, model_classes
+    global ml_model, model_path, model_classes, model_load_attempted, model_load_error
 
     load_model_metadata()
 
-    if load_model is None:
+    with model_load_lock:
+        if model_load_attempted:
+            return ml_model
+
+        model_load_attempted = True
+        model_load_error = None
+
+        try:
+            keras_models = importlib.import_module("tensorflow.keras.models")
+        except ImportError as error:
+            ml_model = None
+            model_path = None
+            model_classes = resolve_model_classes(None)
+            model_load_error = str(error)
+            return None
+
+        for candidate in MODEL_PATH_CANDIDATES:
+            if candidate.exists():
+                try:
+                    ml_model = keras_models.load_model(candidate, compile=False)
+                    model_path = candidate
+                    output_shape = getattr(ml_model, "output_shape", None)
+
+                    if isinstance(output_shape, list):
+                        output_shape = output_shape[0]
+
+                    output_dim = None
+                    if output_shape and len(output_shape) >= 2:
+                        output_dim = output_shape[-1]
+
+                    metadata_classes = model_metadata.get("classes") or []
+                    if metadata_classes:
+                        model_classes = metadata_classes
+                    else:
+                        model_classes = resolve_model_classes(output_dim)
+                    return ml_model
+                except Exception as error:
+                    ml_model = None
+                    model_path = None
+                    model_classes = resolve_model_classes(None)
+                    model_load_error = str(error)
+                    return None
+
         ml_model = None
         model_path = None
-        model_classes = DEFAULT_MODEL_CLASSES
-        return
+        model_classes = resolve_model_classes(None)
+        return None
 
-    for candidate in MODEL_PATH_CANDIDATES:
-        if candidate.exists():
-            ml_model = load_model(candidate, compile=False)
-            model_path = candidate
-            output_shape = getattr(ml_model, "output_shape", None)
 
-            if isinstance(output_shape, list):
-                output_shape = output_shape[0]
+def ensure_prediction_model_loaded():
 
-            output_dim = None
-            if output_shape and len(output_shape) >= 2:
-                output_dim = output_shape[-1]
+    if ml_model is not None:
+        return ml_model
 
-            metadata_classes = model_metadata.get("classes") or []
-            if metadata_classes:
-                model_classes = metadata_classes
-            else:
-                model_classes = resolve_model_classes(output_dim)
-            return
-
-    ml_model = None
-    model_path = None
-    model_classes = DEFAULT_MODEL_CLASSES
+    return load_prediction_model()
 
 
 def save_prediction_record(payload: PredictionRequest, label: str, confidence: float):
@@ -1063,7 +1092,7 @@ def run_prediction(payload: PredictionRequest):
 
     source = "ml_model"
 
-    if ml_model is None:
+    if ensure_prediction_model_loaded() is None:
         return fallback_predict(payload)
 
     prepared_input = prepare_model_input(payload)
@@ -1383,6 +1412,8 @@ async def predict_water_activity_batch(
 @app.get("/api/v1/model-info")
 def get_model_info(current_user: UserProfile = Depends(get_current_user)):
 
+    load_model_metadata()
+
     last_trained = None
     model_name = None
 
@@ -1399,6 +1430,7 @@ def get_model_info(current_user: UserProfile = Depends(get_current_user)):
         "last_trained": model_metadata.get("last_trained", last_trained),
         "classes": model_classes,
         "loaded": ml_model is not None,
+        "load_error": model_load_error,
     }
 
 
@@ -1484,7 +1516,12 @@ async def start_background_tasks():
     app.state.websocket_loop = asyncio.get_running_loop()
 
     create_tables()
-    load_prediction_model()
+    load_model_metadata()
+
+    if MODEL_PRELOAD_ON_STARTUP:
+        thread = threading.Thread(target=load_prediction_model)
+        thread.daemon = True
+        thread.start()
 
     if ENABLE_SENSOR_COLLECTOR:
         thread = threading.Thread(target=sensor_collector)
