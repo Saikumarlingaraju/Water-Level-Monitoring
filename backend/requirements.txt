@@ -2,6 +2,7 @@ requests
 psycopg2-binary
 fastapi
 uvicorn
+websockets
 pydantic
 python-dotenv
 numpy
