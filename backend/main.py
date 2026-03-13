@@ -66,7 +66,9 @@ DEFAULT_MODEL_CLASSES = [
 ]
 MODEL_VERSION = os.environ.get("MODEL_VERSION", "1.0")
 MODEL_ACCURACY = float(os.environ.get("MODEL_ACCURACY", "0.85"))
-AUTH_SECRET_KEY = os.environ.get("AUTH_SECRET_KEY", "change-this-secret-in-production")
+INSECURE_DEFAULT_AUTH_SECRET = "change-this-secret-in-production"
+AUTH_SECRET_KEY = os.environ.get("AUTH_SECRET_KEY", INSECURE_DEFAULT_AUTH_SECRET)
+ALLOW_INSECURE_AUTH_SECRET = env_flag("ALLOW_INSECURE_AUTH_SECRET", False)
 AUTH_ALGORITHM = "HS256"
 AUTH_TOKEN_EXPIRE_MINUTES = int(os.environ.get("AUTH_TOKEN_EXPIRE_MINUTES", "720"))
 ALERT_EMAIL_ENABLED = env_flag("ALERT_EMAIL_ENABLED", False)
@@ -213,6 +215,11 @@ def create_tables():
     """)
 
     cur.execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tank_sensorparameters_node_id_unique
+    ON tank_sensorparameters (node_id)
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         username VARCHAR(80) UNIQUE NOT NULL,
@@ -291,17 +298,22 @@ def generate_test_data():
 # ==============================
 def get_all_registered_node_ids():
     """Return list of all node_ids from tank_sensorparameters, falling back to NODE_ID."""
+    conn = None
+    cur = None
     try:
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("SELECT DISTINCT node_id FROM tank_sensorparameters")
         rows = cur.fetchall()
-        cur.close()
-        conn.close()
         if rows:
             return [r[0] for r in rows]
     except Exception as e:
         print("Error fetching registered nodes:", e)
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
     return [NODE_ID]
 
 
@@ -313,6 +325,8 @@ def sensor_collector():
 
     while True:
 
+        conn = None
+        cur = None
         try:
 
             if TEST_MODE:
@@ -377,14 +391,20 @@ def sensor_collector():
                 )
 
             conn.commit()
-            cur.close()
-            conn.close()
 
             print(f"Sensor data inserted for nodes: {node_ids}")
 
         except Exception as e:
+            if conn is not None:
+                conn.rollback()
 
             print("Error:", e)
+
+        finally:
+            if cur is not None:
+                cur.close()
+            if conn is not None:
+                conn.close()
 
         time.sleep(SENSOR_POLL_SECONDS)
 
@@ -1202,13 +1222,25 @@ def read_current_user(current_user: UserProfile = Depends(get_current_user)):
 @app.websocket("/api/v1/ws/realtime")
 async def realtime_predictions_socket(websocket: WebSocket, token: str = Query(default="")):
 
-    user = get_user_from_token(token)
+    await websocket.accept()
+
+    auth_token = token
+    if not auth_token:
+        try:
+            first_message = await asyncio.wait_for(websocket.receive_text(), timeout=10)
+            parsed = json.loads(first_message)
+            auth_token = str(parsed.get("token", "")).strip() if isinstance(parsed, dict) else ""
+        except Exception:
+            await websocket.close(code=1008)
+            return
+
+    user = get_user_from_token(auth_token)
 
     if user is None:
         await websocket.close(code=1008)
         return
 
-    await realtime_manager.connect(websocket)
+    realtime_manager.active_connections.append(websocket)
     await websocket.send_json({
         "type": "connection_ack",
         "message": "Realtime prediction stream connected",
@@ -1220,7 +1252,17 @@ async def realtime_predictions_socket(websocket: WebSocket, token: str = Query(d
             message = await websocket.receive_text()
             if message == "ping":
                 await websocket.send_json({"type": "pong"})
+                continue
+
+            try:
+                parsed = json.loads(message)
+                if isinstance(parsed, dict) and parsed.get("type") == "ping":
+                    await websocket.send_json({"type": "pong"})
+            except Exception:
+                continue
     except WebSocketDisconnect:
+        realtime_manager.disconnect(websocket)
+    finally:
         realtime_manager.disconnect(websocket)
 
 
@@ -1233,6 +1275,12 @@ def create_tank_parameters(data: TankParameters, current_user: UserProfile = Dep
 
     conn = get_connection()
     cur = conn.cursor()
+
+    cur.execute("SELECT 1 FROM tank_sensorparameters WHERE node_id = %s LIMIT 1", (data.node_id,))
+    if cur.fetchone() is not None:
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=409, detail="Node ID already exists")
 
     cur.execute("""
     INSERT INTO tank_sensorparameters
@@ -1266,12 +1314,34 @@ def create_tank_parameters(data: TankParameters, current_user: UserProfile = Dep
 # ==============================
 @app.get("/tank-parameters")
 @app.get("/api/v1/tank-sensorparameters")
-def get_tank_parameters(current_user: UserProfile = Depends(get_current_user)):
+def get_tank_parameters(
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=10, ge=1, le=100),
+    sort_by: str = Query(default="id"),
+    sort_order: str = Query(default="asc"),
+    current_user: UserProfile = Depends(get_current_user),
+):
+
+    allowed_sort_columns = {"id", "node_id", "tank_height_cm", "tank_length_cm", "tank_width_cm", "lat", "long"}
+    normalized_sort_by = sort_by if sort_by in allowed_sort_columns else "id"
+    normalized_sort_order = "DESC" if sort_order.lower() == "desc" else "ASC"
+    offset = (page - 1) * size
 
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("SELECT * FROM tank_sensorparameters")
+    cur.execute("SELECT COUNT(*) FROM tank_sensorparameters")
+    total = cur.fetchone()[0]
+
+    cur.execute(
+        f"""
+        SELECT id, node_id, tank_height_cm, tank_length_cm, tank_width_cm, lat, long
+        FROM tank_sensorparameters
+        ORDER BY {normalized_sort_by} {normalized_sort_order}
+        LIMIT %s OFFSET %s
+        """,
+        (size, offset),
+    )
 
     rows = cur.fetchall()
 
@@ -1291,7 +1361,12 @@ def get_tank_parameters(current_user: UserProfile = Depends(get_current_user)):
             "long": row[6]
         })
 
-    return result
+    return {
+        "items": result,
+        "total": total,
+        "page": page,
+        "size": size,
+    }
 
 
 # ==============================
@@ -1357,12 +1432,37 @@ def read_root():
 @app.get("/health")
 def get_health():
 
+    database_status = "configured"
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.fetchone()
+        cur.close()
+        conn.close()
+    except Exception:
+        database_status = "unavailable"
+
     return {
         "status": "healthy",
-        "database": "configured",
+        "database": database_status,
         "model_loaded": ml_model is not None,
         "collector_enabled": ENABLE_SENSOR_COLLECTOR,
     }
+
+
+def validate_auth_secret_key():
+    if AUTH_SECRET_KEY != INSECURE_DEFAULT_AUTH_SECRET:
+        return
+
+    if ALLOW_INSECURE_AUTH_SECRET or env_flag("TEST_MODE", True):
+        print("WARNING: Using insecure AUTH_SECRET_KEY; set AUTH_SECRET_KEY in production.")
+        return
+
+    raise RuntimeError(
+        "AUTH_SECRET_KEY is insecure. Set a strong AUTH_SECRET_KEY or explicitly set "
+        "ALLOW_INSECURE_AUTH_SECRET=true only for local development."
+    )
 
 
 @app.post("/api/v1/predict")
@@ -1540,6 +1640,8 @@ def get_alerts(
 async def start_background_tasks():
 
     app.state.websocket_loop = asyncio.get_running_loop()
+
+    validate_auth_secret_key()
 
     create_tables()
     load_model_metadata()

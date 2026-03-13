@@ -265,7 +265,9 @@ const Home = () => {
         }
       );
 
-      const nodesData = response.data || [];
+      const nodesData = Array.isArray(response.data)
+        ? response.data
+        : (response.data?.items || []);
       // Transform the data to match our node structure
       const transformedNodes = nodesData.map(node => ({
         id: node.node_id,
@@ -382,10 +384,11 @@ const Home = () => {
 
     const connect = () => {
       setRealtimeStatus('connecting');
-      socket = new WebSocket(`${config.REALTIME_WS_URL}?token=${encodeURIComponent(authToken)}`);
+      socket = new WebSocket(config.REALTIME_WS_URL);
 
       socket.onopen = () => {
         if (!disposed) {
+          socket.send(JSON.stringify({ type: 'auth', token: authToken }));
           setRealtimeStatus('live');
         }
       };

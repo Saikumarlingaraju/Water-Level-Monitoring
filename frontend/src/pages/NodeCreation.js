@@ -232,7 +232,7 @@ const NodeCreation = () => {
             <div className="volume-display">
               <span>Estimated Volume: </span>
               <strong>
-                {((formData.tank_height_cm * formData.tank_length_cm * formData.tank_width_cm) / 1000000).toFixed(2)} L
+                {((formData.tank_height_cm * formData.tank_length_cm * formData.tank_width_cm) / 1000).toFixed(2)} L
               </strong>
             </div>
           </div>
@@ -276,7 +276,7 @@ const NodeCreation = () => {
                         <td>{node.tank_length_cm}</td>
                         <td>{node.tank_width_cm}</td>
                         <td className="volume">
-                          {((node.tank_height_cm * node.tank_length_cm * node.tank_width_cm) / 1000000).toFixed(2)}
+                          {((node.tank_height_cm * node.tank_length_cm * node.tank_width_cm) / 1000).toFixed(2)}
                         </td>
                         <td className="coordinate">{node.lat}</td>
                         <td className="coordinate">{node.long}</td>
@@ -299,7 +299,7 @@ const NodeCreation = () => {
                 </span>
                 <button 
                   onClick={() => fetchExistingNodes(pagination.page + 1)} 
-                  disabled={existingNodes.length < pagination.size}
+                  disabled={pagination.page * pagination.size >= pagination.total}
                   className="pagination-btn"
                 >
                   Next

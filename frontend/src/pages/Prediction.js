@@ -105,10 +105,11 @@ const Prediction = () => {
 
     const connect = () => {
       setRealtimeStatus('connecting');
-      socket = new WebSocket(`${config.REALTIME_WS_URL}?token=${encodeURIComponent(authToken)}`);
+      socket = new WebSocket(config.REALTIME_WS_URL);
 
       socket.onopen = () => {
         if (!disposed) {
+          socket.send(JSON.stringify({ type: 'auth', token: authToken }));
           setRealtimeStatus('live');
         }
       };
