@@ -55,6 +55,23 @@ def get_cors_settings():
     return origins or ["http://localhost:3000", "http://127.0.0.1:3000"], True, raw_origin_regex
 
 
+def parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+
+    normalized = value.strip()
+    if not normalized:
+        return None
+
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=f"Invalid datetime format: {value}") from error
+
+
 app = FastAPI()
 
 DEFAULT_MODEL_CLASSES = [
@@ -1563,20 +1580,41 @@ def get_model_info(current_user: UserProfile = Depends(get_current_user)):
 @app.get("/api/v1/predictions-history")
 def get_predictions_history(
     limit: int = Query(default=100, ge=1, le=500),
+    node_id: Optional[str] = None,
+    from_ts: Optional[str] = None,
+    to_ts: Optional[str] = None,
     current_user: UserProfile = Depends(get_current_user),
 ):
 
+    from_dt = parse_iso_datetime(from_ts)
+    to_dt = parse_iso_datetime(to_ts)
+
+    query = [
+        "SELECT id, node_id, distance, temperature, prediction, confidence, created_at",
+        "FROM predictions",
+        "WHERE 1=1",
+    ]
+    params = []
+
+    if node_id:
+        query.append("AND node_id = %s")
+        params.append(node_id)
+
+    if from_dt:
+        query.append("AND created_at >= %s")
+        params.append(from_dt)
+
+    if to_dt:
+        query.append("AND created_at <= %s")
+        params.append(to_dt)
+
+    query.append("ORDER BY created_at DESC")
+    query.append("LIMIT %s")
+    params.append(limit)
+
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT id, node_id, distance, temperature, prediction, confidence, created_at
-        FROM predictions
-        ORDER BY created_at DESC
-        LIMIT %s
-        """,
-        (limit,),
-    )
+    cur.execute("\n".join(query), tuple(params))
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -1598,20 +1636,41 @@ def get_predictions_history(
 @app.get("/api/v1/alerts", response_model=List[AlertRecord])
 def get_alerts(
     limit: int = Query(default=50, ge=1, le=200),
+    node_id: Optional[str] = None,
+    from_ts: Optional[str] = None,
+    to_ts: Optional[str] = None,
     current_user: UserProfile = Depends(get_current_user),
 ):
 
+    from_dt = parse_iso_datetime(from_ts)
+    to_dt = parse_iso_datetime(to_ts)
+
+    query = [
+        "SELECT id, node_id, alert_type, severity, message, prediction, confidence, distance, temperature, email_sent, created_at",
+        "FROM alerts",
+        "WHERE 1=1",
+    ]
+    params = []
+
+    if node_id:
+        query.append("AND node_id = %s")
+        params.append(node_id)
+
+    if from_dt:
+        query.append("AND created_at >= %s")
+        params.append(from_dt)
+
+    if to_dt:
+        query.append("AND created_at <= %s")
+        params.append(to_dt)
+
+    query.append("ORDER BY created_at DESC")
+    query.append("LIMIT %s")
+    params.append(limit)
+
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT id, node_id, alert_type, severity, message, prediction, confidence, distance, temperature, email_sent, created_at
-        FROM alerts
-        ORDER BY created_at DESC
-        LIMIT %s
-        """,
-        (limit,),
-    )
+    cur.execute("\n".join(query), tuple(params))
     rows = cur.fetchall()
     cur.close()
     conn.close()

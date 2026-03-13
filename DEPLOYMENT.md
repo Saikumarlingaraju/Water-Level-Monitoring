@@ -119,3 +119,38 @@ Once your frontend URL is ready:
 - Deployed dashboard home page
 - Deployed prediction page
 - Working prediction response from deployed app
+
+## 7. Automated Live Deployment Verification
+
+You can run the deployment verifier from the repository root:
+
+```bash
+./scripts/verify_live_deploy.sh
+```
+
+Optional environment variables:
+
+```bash
+BACKEND_URL=https://your-backend.onrender.com \
+FRONTEND_ORIGIN=https://your-frontend.vercel.app \
+AUTH_USERNAME=your_username \
+AUTH_PASSWORD=your_password \
+./scripts/verify_live_deploy.sh
+```
+
+When auth credentials are provided, the script also verifies `/api/v1/auth/login`, `/api/v1/auth/me`, and `/api/v1/model-info`.
+
+## 8. Test Suite Commands
+
+Backend smoke tests:
+
+```bash
+/workspaces/Water-Level-Monitoring/.venv/bin/python -m pytest backend/tests -q
+```
+
+Frontend smoke tests:
+
+```bash
+cd frontend
+CI=true npm test -- --watchAll=false
+```

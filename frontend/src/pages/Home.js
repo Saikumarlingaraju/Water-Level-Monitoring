@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Area,
   AreaChart,
@@ -117,6 +117,11 @@ const Home = () => {
   const [modelInfo, setModelInfo] = useState(null);
   const [realtimeStatus, setRealtimeStatus] = useState('connecting');
   const [alerts, setAlerts] = useState([]);
+  const selectedNodeRef = useRef(selectedNode);
+  const selectedTimeRangeRef = useRef(selectedTimeRange);
+  const customFromDateRef = useRef(customFromDate);
+  const customToDateRef = useRef(customToDate);
+  const nodesRef = useRef(nodes);
 
   // Mapping between node IDs and tank IDs for sensor data
   const getActualTankId = (nodeId) => {
@@ -133,17 +138,41 @@ const Home = () => {
     try {
       setLoading(true);
       const actualNodeId = getActualTankId(selectedNode);
-      const [sensorResponse, predictionsResponse, modelInfoResponse, alertsResponse] = await Promise.all([
+
+      let fromTs = '';
+      let toTs = '';
+      if (selectedTimeRange === 'custom' && customFromDate && customToDate) {
+        fromTs = new Date(customFromDate).toISOString();
+        toTs = new Date(customToDate).toISOString();
+      }
+
+      const historyQuery = new URLSearchParams({ limit: '150' });
+      const alertsQuery = new URLSearchParams({ limit: '20' });
+
+      if (actualNodeId) {
+        historyQuery.set('node_id', actualNodeId);
+        alertsQuery.set('node_id', actualNodeId);
+      }
+
+      if (fromTs) {
+        historyQuery.set('from_ts', fromTs);
+        alertsQuery.set('from_ts', fromTs);
+      }
+
+      if (toTs) {
+        historyQuery.set('to_ts', toTs);
+        alertsQuery.set('to_ts', toTs);
+      }
+
+      const [sensorResponse, predictionsResponse, alertsResponse] = await Promise.all([
         axios.get(config.SENSOR_DATA_URL, {
+          params: actualNodeId ? { node_id: actualNodeId, limit: 300 } : { limit: 300 },
           headers: { accept: 'application/json' },
         }),
-        axios.get(`${config.PREDICTIONS_HISTORY_URL}?limit=150`, {
+        axios.get(`${config.PREDICTIONS_HISTORY_URL}?${historyQuery.toString()}`, {
           headers: { accept: 'application/json' },
         }),
-        axios.get(config.MODEL_INFO_URL, {
-          headers: { accept: 'application/json' },
-        }),
-        axios.get(`${config.ALERTS_URL}?limit=20`, {
+        axios.get(`${config.ALERTS_URL}?${alertsQuery.toString()}`, {
           headers: { accept: 'application/json' },
         }),
       ]);
@@ -156,19 +185,10 @@ const Home = () => {
         'created_at'
       );
 
-      const historyItems = filterByTimeRange(
-        predictionsResponse.data || [],
-        selectedTimeRange,
-        customFromDate,
-        customToDate,
-        'created_at'
-      );
-
-      const sensorData = allSensorData.filter((item) => item.node_id === actualNodeId);
-      const scopedHistory = historyItems.filter((item) => item.node_id === actualNodeId);
-      const scopedAlerts = (alertsResponse.data || []).filter((item) => !actualNodeId || item.node_id === actualNodeId);
+      const sensorData = allSensorData;
+      const scopedHistory = predictionsResponse.data || [];
+      const scopedAlerts = alertsResponse.data || [];
       setPredictionHistory(scopedHistory);
-      setModelInfo(modelInfoResponse.data);
       setAlerts(scopedAlerts);
 
       // Check if data exists for the selected node
@@ -319,6 +339,17 @@ const Home = () => {
     }
   }, [selectedNode]);
 
+  const fetchModelInfo = useCallback(async () => {
+    try {
+      const response = await axios.get(config.MODEL_INFO_URL, {
+        headers: { accept: 'application/json' },
+      });
+      setModelInfo(response.data);
+    } catch (error) {
+      console.error('Error fetching model info:', error);
+    }
+  }, []);
+
   // Handle node selection change
   const handleNodeChange = (event) => {
     const nodeId = event.target.value;
@@ -359,16 +390,28 @@ const Home = () => {
   }, [fetchNodes]);
 
   useEffect(() => {
+    fetchModelInfo();
+  }, [fetchModelInfo]);
+
+  useEffect(() => {
+    selectedNodeRef.current = selectedNode;
+    selectedTimeRangeRef.current = selectedTimeRange;
+    customFromDateRef.current = customFromDate;
+    customToDateRef.current = customToDate;
+    nodesRef.current = nodes;
+  }, [customFromDate, customToDate, nodes, selectedNode, selectedTimeRange]);
+
+  useEffect(() => {
     if (selectedNode) {
       fetchSensorData();
 
       const interval = setInterval(() => {
         fetchSensorData();
-      }, 30000);
+      }, realtimeStatus === 'live' ? 90000 : 30000);
 
       return () => clearInterval(interval);
     }
-  }, [selectedNode, selectedTimeRange, customFromDate, customToDate, fetchSensorData]);
+  }, [selectedNode, selectedTimeRange, customFromDate, customToDate, fetchSensorData, realtimeStatus]);
 
   useEffect(() => {
     const authToken = getStoredAuthToken();
@@ -397,8 +440,13 @@ const Home = () => {
         try {
           const payload = JSON.parse(event.data);
 
+          if (payload.type === 'connection_ack') {
+            return;
+          }
+
           if (payload.type === 'alert') {
-            if (selectedNode && payload.node_id !== getActualTankId(selectedNode)) {
+            const currentSelectedNode = selectedNodeRef.current;
+            if (currentSelectedNode && payload.node_id !== getActualTankId(currentSelectedNode)) {
               return;
             }
 
@@ -410,17 +458,20 @@ const Home = () => {
             return;
           }
 
-          const actualNodeId = getActualTankId(selectedNode);
+          const currentSelectedNode = selectedNodeRef.current;
+          const actualNodeId = getActualTankId(currentSelectedNode);
 
           if (actualNodeId && payload.node_id !== actualNodeId) {
             return;
           }
 
-          if (!isRealtimeEventInRange(payload, selectedTimeRange, customFromDate, customToDate)) {
+          if (!isRealtimeEventInRange(payload, selectedTimeRangeRef.current, customFromDateRef.current, customToDateRef.current)) {
             return;
           }
 
-          const selectedNodeData = nodes.find((node) => node.id === selectedNode || node.id === payload.node_id);
+          const selectedNodeData = (nodesRef.current || []).find(
+            (node) => node.id === currentSelectedNode || node.id === payload.node_id
+          );
           const tankHeight = selectedNodeData?.tank_height || 200;
           const eventTimestamp = new Date(payload.created_at);
           const waterLevelPercentage = Math.min(
@@ -493,7 +544,7 @@ const Home = () => {
         socket.close();
       }
     };
-  }, [customFromDate, customToDate, nodes, selectedNode, selectedTimeRange]);
+  }, []);
 
   const latestPrediction = predictionHistory[0] || null;
 
