@@ -7,6 +7,7 @@ import config from './config';
 const AUTH_STORAGE_KEY = 'wlm-auth';
 const SESSION_BOOTSTRAP_TIMEOUT_MS = 5000;
 const AUTH_REQUEST_TIMEOUT_MS = 8000;
+const AUTH_RETRY_DELAY_MS = 1200;
 const AuthContext = createContext(null);
 
 export const getStoredAuthToken = () => {
@@ -31,6 +32,14 @@ const setAxiosAuthHeader = (token) => {
   }
 
   delete axios.defaults.headers.common.Authorization;
+};
+
+const sleep = (ms) => new Promise((resolve) => {
+  window.setTimeout(resolve, ms);
+});
+
+const isRetriableAuthError = (error) => {
+  return error?.code === 'ECONNABORTED' || Boolean(error?.request && !error?.response);
 };
 
 export const AuthProvider = ({ children }) => {
@@ -78,17 +87,45 @@ export const AuthProvider = ({ children }) => {
   };
 
   const login = async (credentials) => {
-    const response = await axios.post(config.AUTH_LOGIN_URL, credentials, {
-      timeout: AUTH_REQUEST_TIMEOUT_MS,
-    });
+    let response;
+
+    try {
+      response = await axios.post(config.AUTH_LOGIN_URL, credentials, {
+        timeout: AUTH_REQUEST_TIMEOUT_MS,
+      });
+    } catch (error) {
+      if (!isRetriableAuthError(error)) {
+        throw error;
+      }
+
+      await sleep(AUTH_RETRY_DELAY_MS);
+      response = await axios.post(config.AUTH_LOGIN_URL, credentials, {
+        timeout: AUTH_REQUEST_TIMEOUT_MS,
+      });
+    }
+
     setSession(response.data);
     return response.data;
   };
 
   const register = async (payload) => {
-    const response = await axios.post(config.AUTH_REGISTER_URL, payload, {
-      timeout: AUTH_REQUEST_TIMEOUT_MS,
-    });
+    let response;
+
+    try {
+      response = await axios.post(config.AUTH_REGISTER_URL, payload, {
+        timeout: AUTH_REQUEST_TIMEOUT_MS,
+      });
+    } catch (error) {
+      if (!isRetriableAuthError(error)) {
+        throw error;
+      }
+
+      await sleep(AUTH_RETRY_DELAY_MS);
+      response = await axios.post(config.AUTH_REGISTER_URL, payload, {
+        timeout: AUTH_REQUEST_TIMEOUT_MS,
+      });
+    }
+
     setSession(response.data);
     return response.data;
   };

@@ -6,7 +6,7 @@ import config from '../config';
 
 const getRegisterErrorMessage = (requestError) => {
   if (requestError.code === 'ECONNABORTED') {
-    return 'Registration timed out. Please try again.';
+    return 'Server is taking too long to respond (possibly waking up). Please retry in a few seconds.';
   }
 
   if (requestError.response?.data?.detail) {
@@ -14,7 +14,7 @@ const getRegisterErrorMessage = (requestError) => {
   }
 
   if (requestError.request) {
-    return `Cannot reach the backend at ${config.API_BASE_URL}. Start the API server or set REACT_APP_API_BASE_URL.`;
+    return `Cannot reach the backend at ${config.API_BASE_URL} right now. It may be temporarily unavailable or waking up.`;
   }
 
   return 'Unable to create account';
