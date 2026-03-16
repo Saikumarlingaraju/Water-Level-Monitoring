@@ -5,6 +5,10 @@ import { useAuth } from '../auth';
 import config from '../config';
 
 const getAuthErrorMessage = (requestError) => {
+  if (requestError.code === 'ECONNABORTED') {
+    return 'Login timed out. Please try again.';
+  }
+
   if (requestError.response?.data?.detail) {
     return requestError.response.data.detail;
   }

@@ -5,6 +5,8 @@ import axios from 'axios';
 import config from './config';
 
 const AUTH_STORAGE_KEY = 'wlm-auth';
+const SESSION_BOOTSTRAP_TIMEOUT_MS = 5000;
+const AUTH_REQUEST_TIMEOUT_MS = 8000;
 const AuthContext = createContext(null);
 
 export const getStoredAuthToken = () => {
@@ -47,12 +49,16 @@ export const AuthProvider = ({ children }) => {
 
       try {
         setAxiosAuthHeader(savedToken);
-        const response = await axios.get(config.AUTH_ME_URL);
+        const response = await axios.get(config.AUTH_ME_URL, {
+          timeout: SESSION_BOOTSTRAP_TIMEOUT_MS,
+        });
         setToken(savedToken);
         setUser(response.data);
       } catch (error) {
         localStorage.removeItem(AUTH_STORAGE_KEY);
         setAxiosAuthHeader(null);
+        setToken(null);
+        setUser(null);
       } finally {
         setIsLoading(false);
       }
@@ -72,13 +78,17 @@ export const AuthProvider = ({ children }) => {
   };
 
   const login = async (credentials) => {
-    const response = await axios.post(config.AUTH_LOGIN_URL, credentials);
+    const response = await axios.post(config.AUTH_LOGIN_URL, credentials, {
+      timeout: AUTH_REQUEST_TIMEOUT_MS,
+    });
     setSession(response.data);
     return response.data;
   };
 
   const register = async (payload) => {
-    const response = await axios.post(config.AUTH_REGISTER_URL, payload);
+    const response = await axios.post(config.AUTH_REGISTER_URL, payload, {
+      timeout: AUTH_REQUEST_TIMEOUT_MS,
+    });
     setSession(response.data);
     return response.data;
   };
