@@ -413,14 +413,11 @@ npm start
 
 ## ML Models
 
-The `ml_model/` directory contains Jupyter notebooks for water disaggregation analysis:
+The `ml_model/` directory contains model training assets and scripts:
 
-- **Model_Learning_Animations.ipynb** - Animated visualizations of model training
-- **Model_Learning_Visualizations.ipynb** - Static training visualizations
-- **Water_Disaggregation_Final.ipynb** - Main analysis notebook
-
-Saved models available:
-- CNN, GRU, LSTM models (trained and visualization versions)
+- **run_experiments.py** - Reproducible experiment runner for model comparison
+- **experiment_outputs/** - Training logs, results CSV, and training curves
+- **saved_models/** - Saved CNN, GRU, and LSTM model variants
 
 ---
 

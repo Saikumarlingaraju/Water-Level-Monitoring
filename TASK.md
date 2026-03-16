@@ -160,9 +160,9 @@ CREATE TABLE IF NOT EXISTS predictions (
 
 ### 3.1 Explore Existing Models
 
-Navigate to `ml_model/` and open the Jupyter notebooks:
-- `Water_Disaggregation_Final.ipynb` - Main training notebook
-- `Model_Learning_Visualizations.ipynb` - Training visualizations
+Navigate to `ml_model/` and review the model experimentation assets:
+- `run_experiments.py` - Main experiment runner
+- `experiment_outputs/` - Training logs and visual outputs
 
 ### 3.2 Hyperparameter Tuning
 
