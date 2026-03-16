@@ -6,7 +6,6 @@ websockets
 pydantic
 python-dotenv
 numpy
-tensorflow
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
