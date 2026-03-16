@@ -42,7 +42,10 @@ def env_flag(name: str, default: bool) -> bool:
 
 
 def get_cors_settings():
-    raw_origin_regex = os.environ.get("CORS_ALLOW_ORIGIN_REGEX", "").strip() or None
+    raw_origin_regex = os.environ.get(
+        "CORS_ALLOW_ORIGIN_REGEX",
+        r"https://.*\.(vercel\.app|netlify\.app)$",
+    ).strip() or None
     raw_origins = os.environ.get(
         "CORS_ALLOW_ORIGINS",
         "http://localhost:3000,http://127.0.0.1:3000",

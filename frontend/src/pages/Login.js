@@ -14,7 +14,7 @@ const getAuthErrorMessage = (requestError) => {
   }
 
   if (requestError.request) {
-    return `Cannot reach the backend at ${config.API_BASE_URL} right now. It may be temporarily unavailable or waking up.`;
+    return `Cannot complete the request to ${config.API_BASE_URL}. If the backend is already awake, the browser may be blocking the call because this frontend origin is not allowed by backend CORS.`;
   }
 
   return 'Unable to sign in';

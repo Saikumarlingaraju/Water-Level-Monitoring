@@ -70,3 +70,25 @@ def test_health_endpoint(monkeypatch):
     assert payload["status"] == "healthy"
     assert payload["database"] == "configured"
     assert "model_loaded" in payload
+
+
+def test_get_cors_settings_defaults_support_hosted_frontends(monkeypatch):
+    monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+    monkeypatch.delenv("CORS_ALLOW_ORIGIN_REGEX", raising=False)
+
+    origins, allow_credentials, origin_regex = backend_main.get_cors_settings()
+
+    assert origins == ["http://localhost:3000", "http://127.0.0.1:3000"]
+    assert allow_credentials is True
+    assert origin_regex == r"https://.*\.(vercel\.app|netlify\.app)$"
+
+
+def test_get_cors_settings_allows_explicit_wildcard(monkeypatch):
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "*")
+    monkeypatch.delenv("CORS_ALLOW_ORIGIN_REGEX", raising=False)
+
+    origins, allow_credentials, origin_regex = backend_main.get_cors_settings()
+
+    assert origins == ["*"]
+    assert allow_credentials is False
+    assert origin_regex is None
