@@ -92,3 +92,20 @@ def test_get_cors_settings_allows_explicit_wildcard(monkeypatch):
     assert origins == ["*"]
     assert allow_credentials is False
     assert origin_regex is None
+
+
+def test_startup_survives_database_failure_when_not_strict(monkeypatch):
+    monkeypatch.setattr(backend_main, "ENABLE_SENSOR_COLLECTOR", False)
+    monkeypatch.setattr(backend_main, "MODEL_PRELOAD_ON_STARTUP", False)
+    monkeypatch.setattr(backend_main, "FAIL_STARTUP_ON_DB_ERROR", False)
+
+    def failing_connection():
+        raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr(backend_main, "get_connection", failing_connection)
+
+    with TestClient(backend_main.app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"

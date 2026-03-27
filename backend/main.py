@@ -108,6 +108,7 @@ ALERT_PREDICTION_LABELS = {
     for item in os.environ.get("ALERT_PREDICTION_LABELS", "flush,geyser,washing_machine").split(",")
     if item.strip()
 }
+FAIL_STARTUP_ON_DB_ERROR = env_flag("FAIL_STARTUP_ON_DB_ERROR", False)
 MODEL_PATH_CANDIDATES = [
     BASE_DIR / "saved_models" / "best_model.h5",
     BASE_DIR / "saved_models" / "LSTM_model.h5",
@@ -1705,7 +1706,13 @@ async def start_background_tasks():
 
     validate_auth_secret_key()
 
-    create_tables()
+    try:
+        create_tables()
+    except Exception as error:
+        print(f"WARNING: Database startup initialization failed: {error}")
+        if FAIL_STARTUP_ON_DB_ERROR:
+            raise
+
     load_model_metadata()
 
     if MODEL_PRELOAD_ON_STARTUP:
